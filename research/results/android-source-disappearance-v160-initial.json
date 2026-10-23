@@ -1,0 +1,180 @@
+{
+  "measurement": "Native selected-Chinese source removed while Vietnamese remains in the same ROI",
+  "roi": [
+    233,
+    496,
+    809,
+    538
+  ],
+  "source": "风有点大。",
+  "remaining_text": "Xin chào",
+  "status": "passed",
+  "limitations": [
+    "Correctness check while build runs; not a latency benchmark.",
+    "Pixel check uses controlled neutral-scene background above ROI; it is not OCR quality for arbitrary videos."
+  ],
+  "initial": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 36,
+    "cache_hits": 36,
+    "errors": 0
+  },
+  "source_drawn": {
+    "event": "source_drawn",
+    "id": "source-removal-v160-3151370-1",
+    "elapsed_ms": 3151467,
+    "visible": true,
+    "source_hash": "e46b002b7b8490b5",
+    "at_ms": 3151467
+  },
+  "original_overlay": {
+    "event": "overlay_drawn",
+    "at_ms": 3151736,
+    "request_id": "",
+    "region_id": "146d7b63fa8e5170",
+    "phone_cache": true,
+    "screen_generation": 105,
+    "source_hash": "e46b002b7b8490b5",
+    "translation_hash": "644a606b8cef5474",
+    "overlay_ms": 15,
+    "received_to_draw_ms": 0,
+    "observed_to_draw_ms": 138
+  },
+  "before_image": {
+    "path": "research/results/android-source-disappearance-before-initial.png",
+    "sha256": "56102c9fdf27c4776b21f4258248e003760b1c70755e35408e9f85758bd8283f",
+    "inspected_rectangle": [
+      233,
+      360,
+      809,
+      496
+    ],
+    "dark_caption_backing_pixels": 35482
+  },
+  "remaining_drawn": {
+    "event": "source_drawn",
+    "id": "source-removal-v160-3151370-2",
+    "elapsed_ms": 3152203,
+    "visible": true,
+    "source_hash": "117ae605a3a02bf4",
+    "at_ms": 3152203
+  },
+  "source_cleared": {
+    "event": "source_changed",
+    "at_ms": 3152399,
+    "frame_id": 3835,
+    "region_id": "146d7b63fa8e5170",
+    "screen_generation": 106,
+    "source_hash": "e3b0c44298fc1c14",
+    "empty": true,
+    "capture_ms": 9,
+    "ocr_queue_ms": 0,
+    "ocr_ms": 87,
+    "source_image_id": 8526,
+    "source_image_age_ms": 16,
+    "stabilization_ms": 0,
+    "adaptive_period_ms": 130
+  },
+  "empty_state_update_ms": 196,
+  "after_image": {
+    "path": "research/results/android-source-disappearance-after-initial.png",
+    "sha256": "103d8b62638d6f286ee719bb8b824e4d49892b10e0ba1090358e1a5b4dcadea7",
+    "inspected_rectangle": [
+      233,
+      360,
+      809,
+      496
+    ],
+    "dark_caption_backing_pixels": 0
+  },
+  "stale_overlay_draws_after_source_cleared": [],
+  "translation_requests_after_vietnamese_only": [],
+  "final": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 42,
+    "cache_hits": 42,
+    "errors": 0
+  },
+  "new_ai_calls": 0,
+  "new_errors": 0,
+  "passed": true,
+  "events": [
+    {
+      "event": "source_drawn",
+      "id": "source-removal-v160-3151370-1",
+      "elapsed_ms": 3151467,
+      "visible": true,
+      "source_hash": "e46b002b7b8490b5",
+      "at_ms": 3151467
+    },
+    {
+      "event": "source_changed",
+      "at_ms": 3151720,
+      "frame_id": 3831,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 105,
+      "source_hash": "e46b002b7b8490b5",
+      "empty": false,
+      "capture_ms": 9,
+      "ocr_queue_ms": 0,
+      "ocr_ms": 113,
+      "source_image_id": 8516,
+      "source_image_age_ms": 108,
+      "stabilization_ms": 0,
+      "adaptive_period_ms": 169
+    },
+    {
+      "event": "phone_cache",
+      "at_ms": 3151722,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 105
+    },
+    {
+      "event": "overlay_drawn",
+      "at_ms": 3151736,
+      "request_id": "",
+      "region_id": "146d7b63fa8e5170",
+      "phone_cache": true,
+      "screen_generation": 105,
+      "source_hash": "e46b002b7b8490b5",
+      "translation_hash": "644a606b8cef5474",
+      "overlay_ms": 15,
+      "received_to_draw_ms": 0,
+      "observed_to_draw_ms": 138
+    },
+    {
+      "event": "source_drawn",
+      "id": "source-removal-v160-3151370-2",
+      "elapsed_ms": 3152203,
+      "visible": true,
+      "source_hash": "117ae605a3a02bf4",
+      "at_ms": 3152203
+    },
+    {
+      "event": "source_changed",
+      "at_ms": 3152399,
+      "frame_id": 3835,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 106,
+      "source_hash": "e3b0c44298fc1c14",
+      "empty": true,
+      "capture_ms": 9,
+      "ocr_queue_ms": 0,
+      "ocr_ms": 87,
+      "source_image_id": 8526,
+      "source_image_age_ms": 16,
+      "stabilization_ms": 0,
+      "adaptive_period_ms": 130
+    }
+  ],
+  "installed_apk_sha256": "10ac28a4d8f2342d9536323f081bdc9a7c943a7dd3b3a388872366208a3e9211",
+  "artifact_note": "Independent source-disappearance check on initial 1.6.0 build; does not certify the later final artifact"
+}

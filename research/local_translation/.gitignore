@@ -1,0 +1,10 @@
+# Re-downloadable research inputs that are not needed in the source delivery.
+model-test.txt
+model-api.json
+downloads/
+.venv/
+*.zip
+*.npz
+*.bin
+*.dll
+*.whl

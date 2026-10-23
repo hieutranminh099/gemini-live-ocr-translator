@@ -1,0 +1,432 @@
+{
+  "measurement": "Same Android native source onDraw to overlay onDraw; controlled cache-only revisits",
+  "conditions": {
+    "source_sentences_unique": 6,
+    "samples_each_phase": 100,
+    "roi": [
+      233,
+      496,
+      809,
+      538
+    ],
+    "server_version": "1.5.0",
+    "provider_new_calls": 0,
+    "api_benchmark": "not_run",
+    "cli_benchmark": "No new calls; consumer wrapping unsupported"
+  },
+  "before": {
+    "android_version": "1.5.1",
+    "installed_apk_sha256": "2bf4ecadcd5a3c181341d28691ff93551d16a0903505d9c478696ab5104819d4",
+    "successful_samples": 100,
+    "failed_samples": 0,
+    "success_only_e2e_ms": {
+      "n": 100,
+      "method": "linear interpolation",
+      "average_ms": 235.35,
+      "p50_ms": 222.5,
+      "p90_ms": 348.0,
+      "p95_ms": 387.5,
+      "p99_ms": 549.72,
+      "max_ms": 819
+    },
+    "phone_ram_cache_e2e_ms": {
+      "n": 94,
+      "method": "linear interpolation",
+      "average_ms": 219.87,
+      "p50_ms": 218.0,
+      "p90_ms": 317.7,
+      "p95_ms": 372.25,
+      "p99_ms": 438.43,
+      "max_ms": 484
+    },
+    "server_cache_e2e_ms": {
+      "n": 6,
+      "method": "linear interpolation",
+      "average_ms": 477.83,
+      "p50_ms": 414.5,
+      "p90_ms": 683.0,
+      "p95_ms": 751.0,
+      "p99_ms": 805.4,
+      "max_ms": 819
+    },
+    "stage_success_only_percentiles_ms": {
+      "capture_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 7.16,
+        "p50_ms": 7.0,
+        "p90_ms": 9.0,
+        "p95_ms": 11.0,
+        "p99_ms": 14.01,
+        "max_ms": 15
+      },
+      "ocr_queue_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 4.68,
+        "p50_ms": 1.0,
+        "p90_ms": 2.1,
+        "p95_ms": 25.0,
+        "p99_ms": 80.92,
+        "max_ms": 172
+      },
+      "ocr_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 94.46,
+        "p50_ms": 91.0,
+        "p90_ms": 139.0,
+        "p95_ms": 168.1,
+        "p99_ms": 177.37,
+        "max_ms": 214
+      },
+      "source_image_age_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 12.5,
+        "p50_ms": 10.5,
+        "p90_ms": 26.1,
+        "p95_ms": 30.1,
+        "p99_ms": 48.06,
+        "max_ms": 54
+      },
+      "sampling_and_detection_residual_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 103.68,
+        "p50_ms": 84.5,
+        "p90_ms": 178.7,
+        "p95_ms": 250.05,
+        "p99_ms": 307.1,
+        "max_ms": 317
+      },
+      "overlay_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 10.46,
+        "p50_ms": 10.0,
+        "p90_ms": 16.0,
+        "p95_ms": 22.1,
+        "p99_ms": 37.04,
+        "max_ms": 41
+      },
+      "received_to_draw_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 237.83,
+        "p50_ms": 230.5,
+        "p90_ms": 352.5,
+        "p95_ms": 366.75,
+        "p99_ms": 378.15,
+        "max_ms": 381
+      },
+      "observed_to_draw_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 132.04,
+        "p50_ms": 113.5,
+        "p90_ms": 190.8,
+        "p95_ms": 270.9,
+        "p99_ms": 474.62,
+        "max_ms": 536
+      },
+      "round_trip_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 30.67,
+        "p50_ms": 41.5,
+        "p90_ms": 46.0,
+        "p95_ms": 46.0,
+        "p99_ms": 46.0,
+        "max_ms": 46
+      },
+      "transport_residual_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 30.67,
+        "p50_ms": 41.5,
+        "p90_ms": 46.0,
+        "p95_ms": 46.0,
+        "p99_ms": 46.0,
+        "max_ms": 46
+      },
+      "server_queue_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_cache_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_provider_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_mailbox_queue_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_server_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      }
+    },
+    "new_ai_calls_total": 0
+  },
+  "after": {
+    "android_version": "1.6.0",
+    "installed_apk_sha256": "c05e62113b6449b7ccdbde709e81b85d5637fd62a5004d2cdce5a367e6ee7d83",
+    "successful_samples": 100,
+    "failed_samples": 0,
+    "success_only_e2e_ms": {
+      "n": 100,
+      "method": "linear interpolation",
+      "average_ms": 224.98,
+      "p50_ms": 212.0,
+      "p90_ms": 321.4,
+      "p95_ms": 368.95,
+      "p99_ms": 463.55,
+      "max_ms": 518
+    },
+    "phone_ram_cache_e2e_ms": {
+      "n": 94,
+      "method": "linear interpolation",
+      "average_ms": 217.13,
+      "p50_ms": 203.0,
+      "p90_ms": 315.8,
+      "p95_ms": 340.95,
+      "p99_ms": 407.2,
+      "max_ms": 463
+    },
+    "server_cache_e2e_ms": {
+      "n": 6,
+      "method": "linear interpolation",
+      "average_ms": 348.0,
+      "p50_ms": 326.0,
+      "p90_ms": 460.5,
+      "p95_ms": 489.25,
+      "p99_ms": 512.25,
+      "max_ms": 518
+    },
+    "stage_success_only_percentiles_ms": {
+      "capture_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 6.96,
+        "p50_ms": 7.0,
+        "p90_ms": 9.0,
+        "p95_ms": 10.0,
+        "p99_ms": 12.0,
+        "max_ms": 12
+      },
+      "ocr_queue_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 4.86,
+        "p50_ms": 1.0,
+        "p90_ms": 4.9,
+        "p95_ms": 24.65,
+        "p99_ms": 96.2,
+        "max_ms": 116
+      },
+      "ocr_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 93.63,
+        "p50_ms": 85.5,
+        "p90_ms": 144.4,
+        "p95_ms": 177.1,
+        "p99_ms": 194.01,
+        "max_ms": 195
+      },
+      "source_image_age_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 12.47,
+        "p50_ms": 11.0,
+        "p90_ms": 26.6,
+        "p95_ms": 34.05,
+        "p99_ms": 44.03,
+        "max_ms": 47
+      },
+      "stabilization_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "adaptive_period_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 146.71,
+        "p50_ms": 128.0,
+        "p90_ms": 216.6,
+        "p95_ms": 265.15,
+        "p99_ms": 291.01,
+        "max_ms": 292
+      },
+      "sampling_and_detection_residual_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 97.72,
+        "p50_ms": 89.0,
+        "p90_ms": 166.1,
+        "p95_ms": 206.15,
+        "p99_ms": 290.22,
+        "max_ms": 312
+      },
+      "overlay_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 11.04,
+        "p50_ms": 10.0,
+        "p90_ms": 19.0,
+        "p95_ms": 23.25,
+        "p99_ms": 30.01,
+        "max_ms": 31
+      },
+      "observed_to_draw_ms": {
+        "n": 100,
+        "method": "linear interpolation",
+        "average_ms": 126.71,
+        "p50_ms": 112.5,
+        "p90_ms": 204.3,
+        "p95_ms": 224.4,
+        "p99_ms": 336.59,
+        "max_ms": 395
+      },
+      "received_to_draw_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 168.67,
+        "p50_ms": 164.5,
+        "p90_ms": 215.5,
+        "p95_ms": 229.25,
+        "p99_ms": 240.25,
+        "max_ms": 243
+      },
+      "round_trip_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 11.67,
+        "p50_ms": 4.5,
+        "p90_ms": 26.5,
+        "p95_ms": 30.25,
+        "p99_ms": 33.25,
+        "max_ms": 34
+      },
+      "transport_residual_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 11.67,
+        "p50_ms": 4.5,
+        "p90_ms": 26.5,
+        "p95_ms": 30.25,
+        "p99_ms": 33.25,
+        "max_ms": 34
+      },
+      "server_queue_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_cache_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_provider_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_mailbox_queue_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      },
+      "server_server_ms": {
+        "n": 6,
+        "method": "linear interpolation",
+        "average_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "max_ms": 0
+      }
+    },
+    "new_ai_calls_total": 0
+  },
+  "stale_draws": {
+    "android-cache-before-v151.json": {
+      "physical": 0,
+      "known_ocr": 0
+    },
+    "android-cache-after-v160.json": {
+      "physical": 0,
+      "known_ocr": 0
+    }
+  },
+  "limitations": [
+    "Cache hit rate is 100% by fixture construction, not an estimate of real-video cache hit rate.",
+    "onDraw completion is a native Canvas callback; final GPU/display presentation is not separately instrumented.",
+    "100% application cache by design; not evidence for new Gemini/API/local translation latency or language quality.",
+    "One cohort per APK; small improvement may include run-to-run emulator variability.",
+    "No 100-case cloud misses measured; no P95 cloud target claim."
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "measurement": "Android elapsedRealtime: source first draw to overlay first draw",
+  "started_device_ms": 2465990,
+  "phase": "before-v151",
+  "roi_preserved": [
+    233,
+    496,
+    809,
+    538
+  ],
+  "samples": [],
+  "checks": {
+    "zero_new_ai_calls": true
+  },
+  "events": [
+    {
+      "event": "source_drawn",
+      "id": "before-v151-2465990-1",
+      "elapsed_ms": 2466201,
+      "visible": false,
+      "source_hash": "e3b0c44298fc1c14",
+      "at_ms": 2466201
+    }
+  ],
+  "limitations": [
+    "Cache-only actual screen-to-overlay benchmark; not 100 unique sentences, live Gemini, quality or full video.",
+    "No source/OCR text corrections are accepted. Hash mismatches are failures, not successful samples.",
+    "Provider internal compute and pure network RTT are not measurable from these events.",
+    "Capture sampling wait estimate is a residual, not direct capture-ready instrumentation.",
+    "One reused server cache plus Android RAM cache; these populations are reported separately.",
+    "P99 is based on at most 100 successful samples; report failures alongside success-only quantiles."
+  ],
+  "requested_samples": 100,
+  "unique_sentences": 6,
+  "scenario": "Six previously translated public Chinese sentences revisited in a cycle",
+  "initial": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 6,
+    "cache_hits": 6,
+    "errors": 0
+  },
+  "android_version": "1.5.1",
+  "cache_preflight": {
+    "风有点大。": {
+      "translation": "Gió hơi to.",
+      "translation_hash": "644a606b8cef5474"
+    },
+    "今天休息。": {
+      "translation": "Hôm nay nghỉ ngơi.",
+      "translation_hash": "8860338b0a9a6795"
+    },
+    "车快到了。": {
+      "translation": "Xe sắp tới rồi.",
+      "translation_hash": "e57765cf942b7bb8"
+    },
+    "还要多久。": {
+      "translation": "Còn bao lâu nữa.",
+      "translation_hash": "05c2b0ea8f47359b"
+    },
+    "先买张票。": {
+      "translation": "Mua vé trước đã.",
+      "translation_hash": "3ad399067a74ed95"
+    },
+    "小心台阶。": {
+      "translation": "Cẩn thận bậc thang.",
+      "translation_hash": "735316beba15ed9c"
+    }
+  },
+  "status": "incomplete",
+  "failure": {
+    "type": "TimeoutError",
+    "message": "Expected public test event was not observed; see partial benchmark JSON"
+  },
+  "final": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 12,
+    "cache_hits": 12,
+    "errors": 0
+  },
+  "new_ai_calls_total": 0,
+  "completed_samples": 0,
+  "successful_samples": 0,
+  "failed_samples": 0,
+  "success_only_e2e_ms": {
+    "n": 0
+  },
+  "phone_ram_cache_e2e_ms": {
+    "n": 0
+  },
+  "server_cache_e2e_ms": {
+    "n": 0
+  },
+  "stage_success_only_percentiles_ms": {},
+  "physical_source_mismatches": [],
+  "known_ocr_source_mismatches": []
+}

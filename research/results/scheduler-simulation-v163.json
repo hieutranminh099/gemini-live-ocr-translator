@@ -1,0 +1,1513 @@
+{
+  "kind": "SIMULATED_NOT_GEMINI",
+  "created_utc": "2026-10-23T05:40:48.904977+00:00",
+  "method": "Actual websocket server + controlled asyncio.sleep fake provider; serial CLI baseline versus bounded API workers.",
+  "limitations": [
+    "No Google calls, real translation, OCR, Android, capture, or overlay measured.",
+    "250 ms service exceeds 150 ms cue life. Only final cue is expected to remain current long enough to render.",
+    "This demonstrates less queueing, not ability to translate every cue or a production latency target.",
+    "Three final-cue samples per mode; percentiles describe these samples only; Windows timer jitter remains."
+  ],
+  "fixed_provider_service_ms": 250,
+  "cue_period_ms": 150,
+  "cues_per_run": 20,
+  "real_google_requests": 0,
+  "summary": {
+    "cli": {
+      "runs": 3,
+      "total_input_cues": 60,
+      "total_provider_calls": 39,
+      "total_results_sent": 3,
+      "stale_results_sent": 0,
+      "max_concurrent_provider_calls": 1,
+      "final_cue_queue_p50_ms": 161.397,
+      "final_cue_queue_p95_ms": 174.218,
+      "final_cue_client_result_p50_ms": 415.572,
+      "final_cue_client_result_p95_ms": 425.739
+    },
+    "api": {
+      "runs": 3,
+      "total_input_cues": 60,
+      "total_provider_calls": 60,
+      "total_results_sent": 3,
+      "stale_results_sent": 0,
+      "max_concurrent_provider_calls": 2,
+      "final_cue_queue_p50_ms": 1.991,
+      "final_cue_queue_p95_ms": 2.001,
+      "final_cue_client_result_p50_ms": 257.309,
+      "final_cue_client_result_p95_ms": 270.016
+    }
+  },
+  "records": [
+    {
+      "mode": "cli",
+      "run": 1,
+      "input_cues": 20,
+      "provider_calls": 13,
+      "max_concurrent_provider_calls": 1,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 12,
+      "final_cue_queue_ms": 161.39680007472634,
+      "final_cue_client_result_ms": 415.5719999689609,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 0.250800047069788
+        },
+        {
+          "cue": 1,
+          "sent_ms": 150.55850008502603
+        },
+        {
+          "cue": 2,
+          "sent_ms": 300.1910001039505
+        },
+        {
+          "cue": 3,
+          "sent_ms": 450.55730000603944
+        },
+        {
+          "cue": 4,
+          "sent_ms": 600.2372000366449
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.5441000685096
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.1025001052767
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1050.339400069788
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.458100065589
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1350.342300022021
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1500.4374000709504
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1650.1320000970736
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1800.3119000932202
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.2128000603989
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2100.476299994625
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2250.4180000396445
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2402.4291000096127
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.588999991305
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2707.4427000479773
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2853.323500021361
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 1.661500078625977,
+          "completed_ms": 245.99820002913475,
+          "queue_ms": 1.410700031556189,
+          "observed_service_ms": 244.33669995050877,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 247.03820003196597,
+          "completed_ms": 499.809900065884,
+          "queue_ms": 96.47969994693995,
+          "observed_service_ms": 252.77170003391802,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 501.04880006983876,
+          "completed_ms": 750.8536000968888,
+          "queue_ms": 50.49150006379932,
+          "observed_service_ms": 249.80480002705008,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 751.5595000004396,
+          "completed_ms": 1011.2666999921203,
+          "queue_ms": 151.32229996379465,
+          "observed_service_ms": 259.7071999916807,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 1011.9489000644535,
+          "completed_ms": 1264.6093000657856,
+          "queue_ms": 111.84639995917678,
+          "observed_service_ms": 252.66040000133216,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1265.4319000430405,
+          "completed_ms": 1500.8384000975639,
+          "queue_ms": 64.97379997745156,
+          "observed_service_ms": 235.40650005452335,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1501.4721000334248,
+          "completed_ms": 1745.9776001051068,
+          "queue_ms": 151.12980001140386,
+          "observed_service_ms": 244.50550007168204,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1746.7974000610411,
+          "completed_ms": 1999.0077000111341,
+          "queue_ms": 96.6653999639675,
+          "observed_service_ms": 252.21029995009303,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 1999.5803000638261,
+          "completed_ms": 2250.7406000513583,
+          "queue_ms": 49.36750000342727,
+          "observed_service_ms": 251.1602999875322,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2251.4175000833347,
+          "completed_ms": 2498.9340000320226,
+          "queue_ms": 150.9412000887096,
+          "observed_service_ms": 247.51649994868785,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2499.9153000535443,
+          "completed_ms": 2757.0680000353605,
+          "queue_ms": 97.4862000439316,
+          "observed_service_ms": 257.1526999818161,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2758.3107000682503,
+          "completed_ms": 3013.004200067371,
+          "queue_ms": 50.86800002027303,
+          "observed_service_ms": 254.69349999912083,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 3014.720300096087,
+          "completed_ms": 3268.3800000231713,
+          "queue_ms": 161.39680007472634,
+          "observed_service_ms": 253.65969992708415,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3268.8954999903217,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 172.0,
+            "cache": 0.0,
+            "provider": 250.0,
+            "mailbox_queue": 172.0,
+            "server": 422.0
+          },
+          "client_result_ms": 415.5719999689609
+        }
+      ]
+    },
+    {
+      "mode": "api",
+      "run": 1,
+      "input_cues": 20,
+      "provider_calls": 20,
+      "max_concurrent_provider_calls": 2,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 19,
+      "final_cue_queue_ms": 2.001899993047118,
+      "final_cue_client_result_ms": 239.94529992341995,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 3.478399943560362
+        },
+        {
+          "cue": 1,
+          "sent_ms": 150.45079996343702
+        },
+        {
+          "cue": 2,
+          "sent_ms": 300.18849996849895
+        },
+        {
+          "cue": 3,
+          "sent_ms": 450.1731999916956
+        },
+        {
+          "cue": 4,
+          "sent_ms": 600.5324999568984
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.0602999934927
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.4865998867899
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1050.5748998839408
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.7424999028444
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1350.1512999646366
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1500.4522999515757
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1650.1004999736324
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1800.6785999750718
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.9707998950034
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2100.326999905519
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2250.5058998940513
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2400.800099945627
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.460599944927
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2700.604199897498
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2851.283199968748
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 6.134399911388755,
+          "completed_ms": 248.09829995501786,
+          "queue_ms": 2.655999967828393,
+          "observed_service_ms": 241.9639000436291,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 152.76679990347475,
+          "completed_ms": 412.6673999708146,
+          "queue_ms": 2.3159999400377274,
+          "observed_service_ms": 259.90060006733984,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 2,
+          "started_ms": 302.2459999192506,
+          "completed_ms": 545.2802999643609,
+          "queue_ms": 2.0574999507516623,
+          "observed_service_ms": 243.03430004511029,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 452.3005998926237,
+          "completed_ms": 712.7141999080777,
+          "queue_ms": 2.1273999009281397,
+          "observed_service_ms": 260.413600015454,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 602.6945998892188,
+          "completed_ms": 845.3920999309048,
+          "queue_ms": 2.162099932320416,
+          "observed_service_ms": 242.697500041686,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 5,
+          "started_ms": 752.257899963297,
+          "completed_ms": 996.9246999826282,
+          "queue_ms": 2.197599969804287,
+          "observed_service_ms": 244.66680001933128,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 902.2703999653459,
+          "completed_ms": 1164.1963999718428,
+          "queue_ms": 1.7838000785559416,
+          "observed_service_ms": 261.9260000064969,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 7,
+          "started_ms": 1052.549099898897,
+          "completed_ms": 1296.3498999597505,
+          "queue_ms": 1.9742000149562955,
+          "observed_service_ms": 243.80080006085336,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1202.9851999832317,
+          "completed_ms": 1462.5898998929188,
+          "queue_ms": 2.2427000803872943,
+          "observed_service_ms": 259.60469990968704,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1352.541499887593,
+          "completed_ms": 1596.1521998979151,
+          "queue_ms": 2.3901999229565263,
+          "observed_service_ms": 243.61070001032203,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 10,
+          "started_ms": 1502.597999991849,
+          "completed_ms": 1746.9086999772117,
+          "queue_ms": 2.1457000402733684,
+          "observed_service_ms": 244.3106999853626,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1652.3409999208525,
+          "completed_ms": 1913.67589996662,
+          "queue_ms": 2.240499947220087,
+          "observed_service_ms": 261.3349000457674,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 12,
+          "started_ms": 1803.8206999190152,
+          "completed_ms": 2046.651199925691,
+          "queue_ms": 3.1420999439433217,
+          "observed_service_ms": 242.83050000667572,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 1952.926299883984,
+          "completed_ms": 2212.581899948418,
+          "queue_ms": 1.9554999889805913,
+          "observed_service_ms": 259.6556000644341,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2102.5803999509662,
+          "completed_ms": 2348.6885998863727,
+          "queue_ms": 2.2534000454470515,
+          "observed_service_ms": 246.10819993540645,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 15,
+          "started_ms": 2252.5792999658734,
+          "completed_ms": 2498.7141999881715,
+          "queue_ms": 2.073400071822107,
+          "observed_service_ms": 246.1349000222981,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2403.209099895321,
+          "completed_ms": 2664.537699893117,
+          "queue_ms": 2.40899994969368,
+          "observed_service_ms": 261.3285999977961,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 17,
+          "started_ms": 2553.4826999064535,
+          "completed_ms": 2796.2264999514446,
+          "queue_ms": 3.022099961526692,
+          "observed_service_ms": 242.74380004499108,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2702.6862999191508,
+          "completed_ms": 2963.7189999921247,
+          "queue_ms": 2.0821000216528773,
+          "observed_service_ms": 261.03270007297397,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 2853.285099961795,
+          "completed_ms": 3089.119599899277,
+          "queue_ms": 2.001899993047118,
+          "observed_service_ms": 235.83449993748218,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3091.2284998921677,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 0.0,
+            "cache": 0.0,
+            "provider": 250.0,
+            "mailbox_queue": 0.0,
+            "server": 250.0
+          },
+          "client_result_ms": 239.94529992341995
+        }
+      ]
+    },
+    {
+      "mode": "cli",
+      "run": 2,
+      "input_cues": 20,
+      "provider_calls": 13,
+      "max_concurrent_provider_calls": 1,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 12,
+      "final_cue_queue_ms": 158.36470003705472,
+      "final_cue_client_result_ms": 409.59500009194016,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 0.3104000352323055
+        },
+        {
+          "cue": 1,
+          "sent_ms": 151.2693000258878
+        },
+        {
+          "cue": 2,
+          "sent_ms": 300.51900004036725
+        },
+        {
+          "cue": 3,
+          "sent_ms": 450.680400012061
+        },
+        {
+          "cue": 4,
+          "sent_ms": 600.7648999802768
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.241499976255
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.5700000561774
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1050.131500000134
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.1653000479564
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1352.2805999964476
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1500.3636999754235
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1652.5016999803483
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1801.7113000387326
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.5254999967292
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2101.195099996403
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2250.2809000434354
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2400.276300031692
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.5383000709116
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2701.101800077595
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2850.566799985245
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 2.1869000047445297,
+          "completed_ms": 246.54820002615452,
+          "queue_ms": 1.8764999695122242,
+          "observed_service_ms": 244.36130002141,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 247.38880002405494,
+          "completed_ms": 498.6413000151515,
+          "queue_ms": 96.11949999816716,
+          "observed_service_ms": 251.25249999109656,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 499.49249997735023,
+          "completed_ms": 743.8706000102684,
+          "queue_ms": 48.812099965289235,
+          "observed_service_ms": 244.37810003291816,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 744.8737000813708,
+          "completed_ms": 995.355200022459,
+          "queue_ms": 144.10880010109395,
+          "observed_service_ms": 250.48149994108826,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 996.3192000286654,
+          "completed_ms": 1247.8477000258863,
+          "queue_ms": 95.74919997248799,
+          "observed_service_ms": 251.52849999722093,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1248.4406000003219,
+          "completed_ms": 1495.2223000582308,
+          "queue_ms": 48.27529995236546,
+          "observed_service_ms": 246.7817000579089,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1495.7811000058427,
+          "completed_ms": 1747.4211000371724,
+          "queue_ms": 143.50050000939518,
+          "observed_service_ms": 251.6400000313297,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1749.3002000264823,
+          "completed_ms": 1998.9056000486016,
+          "queue_ms": 96.798500046134,
+          "observed_service_ms": 249.60540002211928,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 1999.8549000592902,
+          "completed_ms": 2243.7660000286996,
+          "queue_ms": 49.329400062561035,
+          "observed_service_ms": 243.9110999694094,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2244.855000055395,
+          "completed_ms": 2494.5510000688955,
+          "queue_ms": 143.6599000589922,
+          "observed_service_ms": 249.69600001350045,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2495.3973999945447,
+          "completed_ms": 2748.8060999894515,
+          "queue_ms": 95.1210999628529,
+          "observed_service_ms": 253.40869999490678,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2749.639500048943,
+          "completed_ms": 3007.973000057973,
+          "queue_ms": 48.53769997134805,
+          "observed_service_ms": 258.3335000090301,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 3008.9315000222996,
+          "completed_ms": 3259.7279000328854,
+          "queue_ms": 158.36470003705472,
+          "observed_service_ms": 250.79640001058578,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3260.161800077185,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 156.0,
+            "cache": 0.0,
+            "provider": 250.0,
+            "mailbox_queue": 156.0,
+            "server": 422.0
+          },
+          "client_result_ms": 409.59500009194016
+        }
+      ]
+    },
+    {
+      "mode": "api",
+      "run": 2,
+      "input_cues": 20,
+      "provider_calls": 20,
+      "max_concurrent_provider_calls": 2,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 19,
+      "final_cue_queue_ms": 1.9489999394863844,
+      "final_cue_client_result_ms": 271.4276999467984,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 0.38079998921602964
+        },
+        {
+          "cue": 1,
+          "sent_ms": 150.43889998923987
+        },
+        {
+          "cue": 2,
+          "sent_ms": 300.4593000514433
+        },
+        {
+          "cue": 3,
+          "sent_ms": 450.57840005028993
+        },
+        {
+          "cue": 4,
+          "sent_ms": 601.29889997188
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.7212000200525
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.1628999831155
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1052.1229000296444
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.4379000281915
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1350.7858000230044
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1503.3247999381274
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1650.5202000262216
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1800.2787999575958
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.7722000125796
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2100.6637000245973
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2250.3133999416605
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2402.0344000309706
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.1697999425232
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2700.8759999880567
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2851.0289000114426
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 2.474399982020259,
+          "completed_ms": 248.9324000198394,
+          "queue_ms": 2.0935999928042293,
+          "observed_service_ms": 246.45800003781915,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 153.19909993559122,
+          "completed_ms": 411.7024999577552,
+          "queue_ms": 2.7601999463513494,
+          "observed_service_ms": 258.503400022164,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 2,
+          "started_ms": 302.38550005014986,
+          "completed_ms": 549.6978999581188,
+          "queue_ms": 1.9261999987065792,
+          "observed_service_ms": 247.31239990796894,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 453.7355999927968,
+          "completed_ms": 696.8433000147343,
+          "queue_ms": 3.1571999425068498,
+          "observed_service_ms": 243.1077000219375,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 604.1889999760315,
+          "completed_ms": 863.6227999813855,
+          "queue_ms": 2.8901000041514635,
+          "observed_service_ms": 259.433800005354,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 5,
+          "started_ms": 753.0591000104323,
+          "completed_ms": 997.513800044544,
+          "queue_ms": 2.3378999903798103,
+          "observed_service_ms": 244.45470003411174,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 902.237799949944,
+          "completed_ms": 1163.6063000187278,
+          "queue_ms": 2.074899966828525,
+          "observed_service_ms": 261.36850006878376,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 7,
+          "started_ms": 1054.1972999926656,
+          "completed_ms": 1297.756199957803,
+          "queue_ms": 2.0743999630212784,
+          "observed_service_ms": 243.55889996513724,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1202.4504999862984,
+          "completed_ms": 1447.0355999656022,
+          "queue_ms": 2.0125999581068754,
+          "observed_service_ms": 244.58509997930378,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1353.2194000435993,
+          "completed_ms": 1602.7761000441387,
+          "queue_ms": 2.433600020594895,
+          "observed_service_ms": 249.55670000053942,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 10,
+          "started_ms": 1506.682000006549,
+          "completed_ms": 1748.4741000225767,
+          "queue_ms": 3.357200068421662,
+          "observed_service_ms": 241.7921000160277,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1652.841900009662,
+          "completed_ms": 1911.5620999364182,
+          "queue_ms": 2.3216999834403396,
+          "observed_service_ms": 258.7201999267563,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 12,
+          "started_ms": 1802.1935999859124,
+          "completed_ms": 2049.481299938634,
+          "queue_ms": 1.9148000283166766,
+          "observed_service_ms": 247.2876999527216,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 1953.8939000340179,
+          "completed_ms": 2195.8029000088573,
+          "queue_ms": 3.1217000214383006,
+          "observed_service_ms": 241.9089999748394,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2102.694100001827,
+          "completed_ms": 2360.8998999698088,
+          "queue_ms": 2.0303999772295356,
+          "observed_service_ms": 258.2057999679819,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 15,
+          "started_ms": 2251.5954000409693,
+          "completed_ms": 2498.906199936755,
+          "queue_ms": 1.2820000993087888,
+          "observed_service_ms": 247.31079989578575,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2404.298200039193,
+          "completed_ms": 2660.7370999408886,
+          "queue_ms": 2.2638000082224607,
+          "observed_service_ms": 256.43889990169555,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 17,
+          "started_ms": 2551.9746999489143,
+          "completed_ms": 2797.4256000015885,
+          "queue_ms": 1.804900006391108,
+          "observed_service_ms": 245.45090005267411,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2702.6374000124633,
+          "completed_ms": 2945.8541000494733,
+          "queue_ms": 1.761400024406612,
+          "observed_service_ms": 243.21670003701,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 2852.977899950929,
+          "completed_ms": 3122.0175999915227,
+          "queue_ms": 1.9489999394863844,
+          "observed_service_ms": 269.03970004059374,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3122.456599958241,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 0.0,
+            "cache": 16.0,
+            "provider": 265.0,
+            "mailbox_queue": 0.0,
+            "server": 281.0
+          },
+          "client_result_ms": 271.4276999467984
+        }
+      ]
+    },
+    {
+      "mode": "cli",
+      "run": 3,
+      "input_cues": 20,
+      "provider_calls": 13,
+      "max_concurrent_provider_calls": 1,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 12,
+      "final_cue_queue_ms": 175.64249993301928,
+      "final_cue_client_result_ms": 426.8684999551624,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 0.34099991898983717
+        },
+        {
+          "cue": 1,
+          "sent_ms": 150.2252999925986
+        },
+        {
+          "cue": 2,
+          "sent_ms": 304.4659999432042
+        },
+        {
+          "cue": 3,
+          "sent_ms": 450.33699995838106
+        },
+        {
+          "cue": 4,
+          "sent_ms": 600.2146999817342
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.8058999665082
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.5071999272332
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1050.5360999377444
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.9532999945804
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1350.3638999536633
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1500.5950999911875
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1650.4586999071762
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1800.3291999921203
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.6009999895468
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2100.7652999833226
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2250.7117999484763
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2400.5085999378935
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.5957999266684
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2700.5457999184728
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2850.5807999754325
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 2.3304999340325594,
+          "completed_ms": 249.33949997648597,
+          "queue_ms": 1.9895000150427222,
+          "observed_service_ms": 247.0090000424534,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 250.25359995197505,
+          "completed_ms": 499.72919991705567,
+          "queue_ms": 100.02829995937645,
+          "observed_service_ms": 249.47559996508062,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 500.59939990751445,
+          "completed_ms": 751.2127999216318,
+          "queue_ms": 50.262399949133396,
+          "observed_service_ms": 250.61340001411736,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 752.0573999499902,
+          "completed_ms": 996.7078999616206,
+          "queue_ms": 151.84269996825606,
+          "observed_service_ms": 244.65050001163036,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 997.8427999885753,
+          "completed_ms": 1249.789199908264,
+          "queue_ms": 97.33560006134212,
+          "observed_service_ms": 251.9463999196887,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1250.405399943702,
+          "completed_ms": 1492.5719000166282,
+          "queue_ms": 49.452099949121475,
+          "observed_service_ms": 242.16650007292628,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1493.6055999714881,
+          "completed_ms": 1747.9450999526307,
+          "queue_ms": 143.24170001782477,
+          "observed_service_ms": 254.33949998114258,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1749.6534999227151,
+          "completed_ms": 2000.3817999968305,
+          "queue_ms": 99.19480001553893,
+          "observed_service_ms": 250.7283000741154,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 2001.6656999941915,
+          "completed_ms": 2242.5209999782965,
+          "queue_ms": 51.06470000464469,
+          "observed_service_ms": 240.85529998410493,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2243.78020002041,
+          "completed_ms": 2496.6293999459594,
+          "queue_ms": 143.0149000370875,
+          "observed_service_ms": 252.84919992554933,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2509.533999953419,
+          "completed_ms": 2766.23720000498,
+          "queue_ms": 109.02540001552552,
+          "observed_service_ms": 256.703200051561,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2767.358999932185,
+          "completed_ms": 3023.9377999678254,
+          "queue_ms": 66.81320001371205,
+          "observed_service_ms": 256.5788000356406,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 3026.2232999084517,
+          "completed_ms": 3276.8443999812007,
+          "queue_ms": 175.64249993301928,
+          "observed_service_ms": 250.62110007274896,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3277.449299930595,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 171.0,
+            "cache": 0.0,
+            "provider": 250.0,
+            "mailbox_queue": 171.0,
+            "server": 421.0
+          },
+          "client_result_ms": 426.8684999551624
+        }
+      ]
+    },
+    {
+      "mode": "api",
+      "run": 3,
+      "input_cues": 20,
+      "provider_calls": 20,
+      "max_concurrent_provider_calls": 2,
+      "results_sent": 1,
+      "stale_results_sent": 0,
+      "superseded_provider_completions": 19,
+      "final_cue_queue_ms": 1.990600023418665,
+      "final_cue_client_result_ms": 257.3092000093311,
+      "cues_sent": [
+        {
+          "cue": 0,
+          "sent_ms": 0.3307999577373266
+        },
+        {
+          "cue": 1,
+          "sent_ms": 150.54479998070747
+        },
+        {
+          "cue": 2,
+          "sent_ms": 300.80890003591776
+        },
+        {
+          "cue": 3,
+          "sent_ms": 452.1041000261903
+        },
+        {
+          "cue": 4,
+          "sent_ms": 601.7336000222713
+        },
+        {
+          "cue": 5,
+          "sent_ms": 750.9691999293864
+        },
+        {
+          "cue": 6,
+          "sent_ms": 900.4560000030324
+        },
+        {
+          "cue": 7,
+          "sent_ms": 1053.1704999739304
+        },
+        {
+          "cue": 8,
+          "sent_ms": 1200.389500008896
+        },
+        {
+          "cue": 9,
+          "sent_ms": 1350.639499956742
+        },
+        {
+          "cue": 10,
+          "sent_ms": 1500.65469997935
+        },
+        {
+          "cue": 11,
+          "sent_ms": 1650.459500029683
+        },
+        {
+          "cue": 12,
+          "sent_ms": 1802.610500017181
+        },
+        {
+          "cue": 13,
+          "sent_ms": 1950.4307999741286
+        },
+        {
+          "cue": 14,
+          "sent_ms": 2100.9884999366477
+        },
+        {
+          "cue": 15,
+          "sent_ms": 2251.235199975781
+        },
+        {
+          "cue": 16,
+          "sent_ms": 2400.3475999925286
+        },
+        {
+          "cue": 17,
+          "sent_ms": 2550.476299948059
+        },
+        {
+          "cue": 18,
+          "sent_ms": 2700.7647999562323
+        },
+        {
+          "cue": 19,
+          "sent_ms": 2854.8013999825343
+        }
+      ],
+      "provider_intervals": [
+        {
+          "cue": 0,
+          "started_ms": 2.5525999953970313,
+          "completed_ms": 247.70599999465048,
+          "queue_ms": 2.2218000376597047,
+          "observed_service_ms": 245.15339999925345,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 1,
+          "started_ms": 153.03950000088662,
+          "completed_ms": 413.4437999455258,
+          "queue_ms": 2.4947000201791525,
+          "observed_service_ms": 260.4042999446392,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 2,
+          "started_ms": 304.38839993439615,
+          "completed_ms": 549.8388999840245,
+          "queue_ms": 3.579499898478389,
+          "observed_service_ms": 245.45050004962832,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 3,
+          "started_ms": 454.4627999421209,
+          "completed_ms": 698.880499927327,
+          "queue_ms": 2.3586999159306288,
+          "observed_service_ms": 244.41769998520613,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 4,
+          "started_ms": 603.6066999658942,
+          "completed_ms": 862.5375999836251,
+          "queue_ms": 1.8730999436229467,
+          "observed_service_ms": 258.9309000177309,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 5,
+          "started_ms": 753.2368999673054,
+          "completed_ms": 996.8890999443829,
+          "queue_ms": 2.267700037918985,
+          "observed_service_ms": 243.65219997707754,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 6,
+          "started_ms": 902.7066000271589,
+          "completed_ms": 1164.354500011541,
+          "queue_ms": 2.25060002412647,
+          "observed_service_ms": 261.6478999843821,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 7,
+          "started_ms": 1055.4456999525428,
+          "completed_ms": 1297.9051999282092,
+          "queue_ms": 2.2751999786123633,
+          "observed_service_ms": 242.4594999756664,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 8,
+          "started_ms": 1202.4124999297783,
+          "completed_ms": 1447.8622999740764,
+          "queue_ms": 2.0229999208822846,
+          "observed_service_ms": 245.44980004429817,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 9,
+          "started_ms": 1352.9978999868035,
+          "completed_ms": 1612.5723000150174,
+          "queue_ms": 2.3584000300616026,
+          "observed_service_ms": 259.57440002821386,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 10,
+          "started_ms": 1502.8970999410376,
+          "completed_ms": 1748.7423999700695,
+          "queue_ms": 2.2423999616876245,
+          "observed_service_ms": 245.84530002903193,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 11,
+          "started_ms": 1653.6283999448642,
+          "completed_ms": 1913.8598999707028,
+          "queue_ms": 3.1688999151811004,
+          "observed_service_ms": 260.2315000258386,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 12,
+          "started_ms": 1804.8293000319973,
+          "completed_ms": 2047.762000001967,
+          "queue_ms": 2.2188000148162246,
+          "observed_service_ms": 242.9326999699697,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 13,
+          "started_ms": 1952.6890999404714,
+          "completed_ms": 2198.036100016907,
+          "queue_ms": 2.258299966342747,
+          "observed_service_ms": 245.3470000764355,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 14,
+          "started_ms": 2103.0680999392644,
+          "completed_ms": 2363.0190999247134,
+          "queue_ms": 2.079600002616644,
+          "observed_service_ms": 259.950999985449,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 15,
+          "started_ms": 2253.3915999811143,
+          "completed_ms": 2497.8524999460205,
+          "queue_ms": 2.1564000053331256,
+          "observed_service_ms": 244.46089996490628,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 16,
+          "started_ms": 2402.6830999646336,
+          "completed_ms": 2661.649900022894,
+          "queue_ms": 2.3354999721050262,
+          "observed_service_ms": 258.96680005826056,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 17,
+          "started_ms": 2552.6598999276757,
+          "completed_ms": 2797.8982999920845,
+          "queue_ms": 2.1835999796167016,
+          "observed_service_ms": 245.23840006440878,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 18,
+          "started_ms": 2703.0549999326468,
+          "completed_ms": 2952.0453999284655,
+          "queue_ms": 2.290199976414442,
+          "observed_service_ms": 248.99039999581873,
+          "superseded_before_completion": true
+        },
+        {
+          "cue": 19,
+          "started_ms": 2856.792000005953,
+          "completed_ms": 3110.7018999755383,
+          "queue_ms": 1.990600023418665,
+          "observed_service_ms": 253.90989996958524,
+          "superseded_before_completion": false
+        }
+      ],
+      "received_results": [
+        {
+          "request_id": "19",
+          "type": "result",
+          "received_ms": 3112.1105999918655,
+          "current_cue": 19,
+          "stale": false,
+          "timings_ms": {
+            "queue": 0.0,
+            "cache": 0.0,
+            "provider": 250.0,
+            "mailbox_queue": 0.0,
+            "server": 250.0
+          },
+          "client_result_ms": 257.3092000093311
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "protocol_version": 1,
+  "transport": "wss",
+  "authentication": "Authorization: Bearer <device-token>",
+  "certificate_identity": "SHA-256 of certificate DER, confirmed at pairing",
+  "request_schema": {
+    "$defs": {
+      "Block": {
+        "properties": {
+          "id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "box": {
+            "$ref": "#/$defs/Box"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "box"
+        ],
+        "title": "Block",
+        "type": "object"
+      },
+      "Box": {
+        "properties": {
+          "x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "title": "Width",
+            "type": "number"
+          },
+          "height": {
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "title": "Height",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "Box",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "type": {
+        "const": "translate",
+        "default": "translate",
+        "title": "Type",
+        "type": "string"
+      },
+      "request_id": {
+        "maxLength": 80,
+        "minLength": 1,
+        "title": "Request Id",
+        "type": "string"
+      },
+      "region_id": {
+        "anyOf": [
+          {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Region Id"
+      },
+      "screen_generation": {
+        "anyOf": [
+          {
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Screen Generation"
+      },
+      "latest_only": {
+        "default": false,
+        "title": "Latest Only",
+        "type": "boolean"
+      },
+      "source": {
+        "default": "ja",
+        "enum": [
+          "en",
+          "ja",
+          "zh",
+          "ko"
+        ],
+        "title": "Source",
+        "type": "string"
+      },
+      "profile": {
+        "default": "game",
+        "enum": [
+          "game",
+          "manga",
+          "document",
+          "web",
+          "technical"
+        ],
+        "title": "Profile",
+        "type": "string"
+      },
+      "mode": {
+        "default": "smart",
+        "enum": [
+          "fast",
+          "smart",
+          "quality"
+        ],
+        "title": "Mode",
+        "type": "string"
+      },
+      "blocks": {
+        "items": {
+          "$ref": "#/$defs/Block"
+        },
+        "maxItems": 40,
+        "minItems": 1,
+        "title": "Blocks",
+        "type": "array"
+      }
+    },
+    "required": [
+      "request_id",
+      "blocks"
+    ],
+    "title": "TranslateRequest",
+    "type": "object"
+  }
+}

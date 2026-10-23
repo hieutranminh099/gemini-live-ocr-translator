@@ -1,0 +1,180 @@
+{
+  "measurement": "Native selected-Chinese source removed while Vietnamese remains in the same ROI",
+  "roi": [
+    233,
+    496,
+    809,
+    538
+  ],
+  "source": "风有点大。",
+  "remaining_text": "Xin chào",
+  "status": "passed",
+  "installed_apk_sha256": "c05e62113b6449b7ccdbde709e81b85d5637fd62a5004d2cdce5a367e6ee7d83",
+  "limitations": [
+    "Single controlled correctness check on final APK after build; not a latency percentile benchmark.",
+    "Pixel check uses controlled neutral-scene background above ROI; it is not OCR quality for arbitrary videos."
+  ],
+  "initial": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 54,
+    "cache_hits": 54,
+    "errors": 0
+  },
+  "android_version": "1.6.0",
+  "source_drawn": {
+    "event": "source_drawn",
+    "id": "source-removal-v160-3321430-1",
+    "elapsed_ms": 3321600,
+    "visible": true,
+    "source_hash": "e46b002b7b8490b5",
+    "at_ms": 3321600
+  },
+  "original_overlay": {
+    "event": "overlay_drawn",
+    "at_ms": 3321785,
+    "request_id": "",
+    "region_id": "146d7b63fa8e5170",
+    "phone_cache": true,
+    "screen_generation": 105,
+    "source_hash": "e46b002b7b8490b5",
+    "translation_hash": "644a606b8cef5474",
+    "overlay_ms": 6,
+    "received_to_draw_ms": 0,
+    "observed_to_draw_ms": 165
+  },
+  "before_image": {
+    "path": "research/results/android-source-disappearance-before.png",
+    "sha256": "4d50bf088ab7a47d4134f2d85cae3b6788f5ec27e8fc90e82b937f28c7890300",
+    "inspected_rectangle": [
+      233,
+      360,
+      809,
+      496
+    ],
+    "dark_caption_backing_pixels": 35482
+  },
+  "remaining_drawn": {
+    "event": "source_drawn",
+    "id": "source-removal-v160-3321430-2",
+    "elapsed_ms": 3322284,
+    "visible": true,
+    "source_hash": "117ae605a3a02bf4",
+    "at_ms": 3322284
+  },
+  "source_cleared": {
+    "event": "source_changed",
+    "at_ms": 3322451,
+    "frame_id": 769,
+    "region_id": "146d7b63fa8e5170",
+    "screen_generation": 106,
+    "source_hash": "e3b0c44298fc1c14",
+    "empty": true,
+    "capture_ms": 9,
+    "ocr_queue_ms": 1,
+    "ocr_ms": 84,
+    "source_image_id": 4166,
+    "source_image_age_ms": 38,
+    "stabilization_ms": 0,
+    "adaptive_period_ms": 126
+  },
+  "empty_state_update_ms": 167,
+  "after_image": {
+    "path": "research/results/android-source-disappearance-after.png",
+    "sha256": "064f23e68b82764d1bb034378d9f200331dc27968bd7f5218b43f5b98ba5f0fc",
+    "inspected_rectangle": [
+      233,
+      360,
+      809,
+      496
+    ],
+    "dark_caption_backing_pixels": 0
+  },
+  "stale_overlay_draws_after_source_cleared": [],
+  "translation_requests_after_vietnamese_only": [],
+  "final": {
+    "windows_version": "1.5.0",
+    "provider": "cli",
+    "api_configured": false,
+    "supported_cli_backend": false,
+    "usage_requests": 141,
+    "frames": 60,
+    "cache_hits": 60,
+    "errors": 0
+  },
+  "new_ai_calls": 0,
+  "new_errors": 0,
+  "passed": true,
+  "events": [
+    {
+      "event": "source_drawn",
+      "id": "source-removal-v160-3321430-1",
+      "elapsed_ms": 3321600,
+      "visible": true,
+      "source_hash": "e46b002b7b8490b5",
+      "at_ms": 3321600
+    },
+    {
+      "event": "source_changed",
+      "at_ms": 3321778,
+      "frame_id": 764,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 105,
+      "source_hash": "e46b002b7b8490b5",
+      "empty": false,
+      "capture_ms": 13,
+      "ocr_queue_ms": 0,
+      "ocr_ms": 145,
+      "source_image_id": 4146,
+      "source_image_age_ms": 0,
+      "stabilization_ms": 0,
+      "adaptive_period_ms": 217
+    },
+    {
+      "event": "phone_cache",
+      "at_ms": 3321780,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 105
+    },
+    {
+      "event": "overlay_drawn",
+      "at_ms": 3321785,
+      "request_id": "",
+      "region_id": "146d7b63fa8e5170",
+      "phone_cache": true,
+      "screen_generation": 105,
+      "source_hash": "e46b002b7b8490b5",
+      "translation_hash": "644a606b8cef5474",
+      "overlay_ms": 6,
+      "received_to_draw_ms": 0,
+      "observed_to_draw_ms": 165
+    },
+    {
+      "event": "source_drawn",
+      "id": "source-removal-v160-3321430-2",
+      "elapsed_ms": 3322284,
+      "visible": true,
+      "source_hash": "117ae605a3a02bf4",
+      "at_ms": 3322284
+    },
+    {
+      "event": "source_changed",
+      "at_ms": 3322451,
+      "frame_id": 769,
+      "region_id": "146d7b63fa8e5170",
+      "screen_generation": 106,
+      "source_hash": "e3b0c44298fc1c14",
+      "empty": true,
+      "capture_ms": 9,
+      "ocr_queue_ms": 1,
+      "ocr_ms": 84,
+      "source_image_id": 4166,
+      "source_image_age_ms": 38,
+      "stabilization_ms": 0,
+      "adaptive_period_ms": 126
+    }
+  ]
+}
