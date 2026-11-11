@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dịch phim cá nhân</title><link rel="stylesheet" href="/assets/style.css"></head>
+<body><main>
+<div class="brand">DỊCH PHIM CÁ NHÂN <span>Trên máy của bạn</span></div>
+<h1>Chọn phim.<br>Nhận bản dịch.</h1>
+<p class="intro">App tự lấy phụ đề, dịch sang tiếng Việt và tạo video có phụ đề.</p>
+<section class="account" aria-label="Kết nối AI"><div><strong id="account-name">Kết nối ChatGPT để bắt đầu</strong><p id="account-status">Đăng nhập lần đầu và cho phép app sử dụng gói ChatGPT của bạn.</p></div><div class="actions"><button id="login">Continue with ChatGPT</button><a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Quản lý mức sử dụng ↗</a><button id="logout" class="secondary" hidden>Ngắt kết nối</button></div></section>
+<div id="notice" role="status" hidden></div>
+<label class="upload" id="drop"><span class="upload-icon">↑</span><strong>Chọn hoặc kéo phim vào đây</strong><span>MP4, MKV, MOV, WebM · một phim mỗi lần</span><input id="file" type="file" accept="video/*,.mkv,.mp4,.mov,.webm,.avi,.m4v,.ts" disabled></label>
+<p class="privacy">Video được xử lý và lưu trên máy. Chỉ văn bản cần dịch được gửi sang OpenAI khi bạn chọn phim. Bản dịch AI chưa qua người duyệt.</p>
+<div id="upload-status" role="status" hidden><label for="upload-progress">Đang đưa phim vào dự án…</label><progress id="upload-progress" max="100" value="0"></progress></div>
+<details><summary>Tùy chọn</summary><div class="options"><label>Ngôn ngữ phim<select id="source"><option value="zh">Tiếng Trung</option><option value="en">Tiếng Anh</option><option value="ja">Tiếng Nhật</option><option value="ko">Tiếng Hàn</option></select></label><label>Model trong tài khoản<select id="model" disabled></select></label></div><p>Ưu tiên phụ đề văn bản; nếu không có, dùng OCR vùng dưới của phim. Phim không có chữ cần bộ nhận diện giọng nói phù hợp. Các bản dịch đã lưu được giữ khi tiếp tục.</p></details>
+<section aria-label="Các phim"><h2>Phim của bạn</h2><div id="jobs"><p class="empty">Phim và kết quả sẽ xuất hiện ở đây.</p></div></section>
+<footer><p id="data-location"></p><p>Đóng cửa sổ này vẫn có thể tiếp tục xử lý. Khi mở lại app, các công đoạn đã lưu được giữ.</p><button id="close-app" class="secondary">Thoát app và lưu tiến độ</button></footer>
+</main><script src="/assets/app.js"></script></body></html>

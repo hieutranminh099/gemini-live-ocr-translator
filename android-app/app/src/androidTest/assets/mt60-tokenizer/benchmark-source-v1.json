@@ -1,0 +1,208 @@
+{
+  "kind": "PUBLIC_AND_AUTHORED_MT60_NATIVE_DIAGNOSTIC_INPUTS_NOT_TRANSLATION_LOOKUP",
+  "cases": [
+    {
+      "case_id": "negation_positive",
+      "source_zh": "我今天一定会答应你的请求。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "negation_negative",
+      "source_zh": "我今天一定不会答应你的请求。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "double_negation_explanation",
+      "source_zh": "不是我不想帮你，是我真的走不开。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "numeric_simultaneous",
+      "source_zh": "还有2小时3分钟。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "numeric_correction",
+      "source_zh": "不是300，是30，别多给了。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "chinese_numeral_contrast",
+      "source_zh": "一共需要五千块钱才能买下。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "target_number_order",
+      "source_zh": "等级2获得3金币。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "repeated_number_ambiguity",
+      "source_zh": "2人各拿3张票。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "male_object",
+      "source_zh": "这件事情只需要告诉他。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "female_object",
+      "source_zh": "这件事情只需要告诉她。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "teacher_honorific",
+      "source_zh": "你先走吧。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "friend_address",
+      "source_zh": "你先走吧。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "father_ellipsis",
+      "source_zh": "给他吧，别再藏着了。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "idiom_critical_moment",
+      "source_zh": "关键时候掉链子。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "brother_praise",
+      "source_zh": "还得是我兄弟。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "traditional_script",
+      "source_zh": "別過去，現在還不能暴露身份。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "conditional_not_assertion",
+      "source_zh": "如果他明天不来，我们就自己走。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "ability_vs_permission",
+      "source_zh": "他现在还不能下床。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "name_replacement",
+      "source_zh": "把这份文件交给李明，不是王明。",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "unfinished_clause",
+      "source_zh": "我只是觉得，如果那天……",
+      "kind": "authored_diagnostic_without_context"
+    },
+    {
+      "case_id": "public-0",
+      "source_zh": "愿主保佑你",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-1",
+      "source_zh": "我的孩子",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-2",
+      "source_zh": "军哥 军哥",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-3",
+      "source_zh": "帮帮我",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-4",
+      "source_zh": "扶住他",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-5",
+      "source_zh": "导体两端电压一定时",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-6",
+      "source_zh": "流过导体的电流与导体电阻成反比",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-7",
+      "source_zh": "关键时候掉链子",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "public-8",
+      "source_zh": "还得是我兄弟",
+      "kind": "previously_observed_public_cue"
+    },
+    {
+      "case_id": "teacher_honorific-context",
+      "source_zh": "你先走吧。",
+      "previous_zh": "老师，这条路我很熟悉。",
+      "previous_vi": "Thưa thầy, em rất quen đường này.",
+      "kind": "authored_accepted_previous_pair_context_probe"
+    },
+    {
+      "case_id": "friend_address-context",
+      "source_zh": "你先走吧。",
+      "previous_zh": "老朋友，我们在前面的咖啡馆见。",
+      "previous_vi": "Bạn cũ à, chúng ta gặp nhau ở quán cà phê phía trước nhé.",
+      "kind": "authored_accepted_previous_pair_context_probe"
+    },
+    {
+      "case_id": "father_ellipsis-context",
+      "source_zh": "给他吧，别再藏着了。",
+      "previous_zh": "这封信是写给父亲的。",
+      "previous_vi": "Bức thư này được viết cho cha.",
+      "kind": "authored_accepted_previous_pair_context_probe"
+    },
+    {
+      "case_id": "modern-phone-context",
+      "source_zh": "等我一下，我马上给你回电话。",
+      "previous_zh": "我们刚才正在用手机通话。",
+      "previous_vi": "Vừa rồi chúng ta đang nói chuyện qua điện thoại.",
+      "kind": "authored_accepted_previous_pair_context_probe"
+    },
+    {
+      "case_id": "live-observed-0",
+      "source_zh": "太牛了军哥",
+      "kind": "observed_public_video_cue"
+    },
+    {
+      "case_id": "live-observed-1",
+      "source_zh": "从此以后",
+      "kind": "observed_public_video_cue"
+    },
+    {
+      "case_id": "live-observed-2",
+      "source_zh": "这便是我唯一的剑",
+      "kind": "observed_public_video_cue"
+    },
+    {
+      "case_id": "live-observed-3",
+      "source_zh": "是否就这样任人宰割",
+      "kind": "observed_public_video_cue"
+    },
+    {
+      "case_id": "live-observed-4",
+      "source_zh": "我顾剑门十六入天启",
+      "kind": "observed_public_video_cue"
+    },
+    {
+      "case_id": "live-observed-5",
+      "source_zh": "意图吞并我顾家",
+      "kind": "observed_public_video_cue"
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+# Kho phụ đề Tiếng Trung (ZH -> VI) nạp vào SQLite subtitle_bank (idx_zh_hash)
+你好	Xin chào
+你们好	Chào mọi người
+大家好	Chào mọi người
+早上好	Chào buổi sáng
+晚上好	Chào buổi tối
+晚安	Chúc ngủ ngon
+好久不见	Lâu rồi không gặp
+谢谢	Cảm ơn
+谢谢你	Cảm ơn bạn
+多谢	Đa tạ
+非常感谢	Vô cùng cảm ơn
+不客气	Đừng khách sáo
+不用谢	Không cần cảm ơn
+对不起	Xin lỗi
+真的很抱歉	Thực sự rất xin lỗi
+抱歉	Xin lỗi
+不好意思	Ngại quá
+没关系	Không sao đâu
+没事	Không sao
+没事吧	Không sao chứ
+你没事吧	Bạn không sao chứ
+你还好吗	Bạn vẫn ổn chứ
+我没事	Tôi không sao
+不用担心	Không cần lo lắng
+别担心	Đừng lo lắng
+放心吧	Yên tâm đi
+你放心	Cứ yên tâm
+再见	Tạm biệt
+回头见	Hẹn gặp lại
+明天见	Mai gặp lại
+保重	Bảo trọng
+一路顺风	Thượng lộ bình an
+请进	Mời vào
+请坐	Mời ngồi
+请稍等	Vui lòng đợi một chút
+等一下	Đợi một chút
+等一等	Đợi đã
+等等	Khoan đã
+等等我	Đợi tôi với
+慢着	Khoan đã
+且慢	Khoan đã
+站住	Đứng lại
+别跑	Đừng chạy
+别动	Đừng cử động
+不许动	Không được nhúc nhích
+住手	Dừng tay
+快住手	Mau dừng tay
+停下	Dừng lại
+快停下	Mau dừng lại
+放开我	Buông tôi ra
+放手	Buông tay ra
+快放开我	Mau buông tôi ra
+别过来	Đừng lại gần đây
+你别过来	Ngươi đừng qua đây
+离我远点	Tránh xa tôi ra
+滚	Cút
+滚开	Cút ngay
+给我滚	Cút ngay cho ta
+闭嘴	Câm miệng
+你闭嘴	Ngươi câm miệng đi
+少废话	Bớt lời đi
+别废话	Đừng nhiều lời
+胡说八道	Ăn nói hàm hồ
+胡说	Nói bậy
+一派胡言	Toàn lời bịa đặt
+什么	Cái gì
+你说什么	Ngươi nói cái gì
+这是什么	Đây là cái gì
+那是什么	Đó là cái gì
+怎么了	Sao thế
+你怎么了	Bạn làm sao thế
+怎么回事	Chuyện gì thế
+这是怎么回事	Chuyện này là thế nào
+到底怎么回事	Rốt cuộc là chuyện gì
+到底怎么了	Rốt cuộc đã xảy ra chuyện gì
+发生了什么	Đã xảy ra chuyện gì
+发生什么事了	Xảy ra chuyện gì vậy
+你是谁	Ngươi là ai
+你到底是谁	Rốt cuộc ngươi là ai
+你们是谁	Các ngươi là ai
+他是谁	Hắn là ai
+这是哪里	Đây là đâu
+我在哪	Tôi đang ở đâu
+你在哪里	Bạn đang ở đâu
+他在哪里	Hắn ở đâu
+为什么	Tại sao
+为什么会这样	Tại sao lại như vậy
+怎么会这样	Sao lại ra nông nỗi này
+怎么可能	Làm sao có thể
+这怎么可能	Chuyện này làm sao có thể
+不可能	Không thể nào
+这不可能	Chuyện này không thể nào
+绝对不可能	Tuyệt đối không thể nào
+难以置信	Thật khó tin
+太不可思议了	Thật không thể tin nổi
+真的吗	Thật sao
+真的假的	Thật hay giả vậy
+当真	Thật chứ
+此话当真	Lời này là thật chứ
+开玩笑的吧	Đùa đấy à
+你在开玩笑吗	Bạn đang đùa đấy à
+开什么玩笑	Đùa kiểu gì thế
+你疯了吗	Ngươi điên rồi sao
+你疯了	Ngươi điên rồi
+你在干什么	Ngươi đang làm cái gì vậy
+你想干什么	Ngươi muốn làm gì
+你要干什么	Ngươi định làm gì
+怎么办	Phải làm sao đây
+现在怎么办	Bây giờ phải làm sao
+我们该怎么办	Chúng ta phải làm sao đây
+来不及了	Không kịp nữa rồi
+已经来不及了	Đã không kịp nữa rồi
+太晚了	Muộn quá rồi
+糟了	Hỏng rồi
+不好	Không xong rồi
+不好了	Không xong rồi
+完蛋了	Tiêu đời rồi
+完了	Xong đời rồi
+该死	Chết tiệt
+可恶	Đáng ghét
+混蛋	Tên khốn
+混账	Hỗn láo
+王八蛋	Đồ khốn kiếp
+天哪	Trời ơi
+我的天	Trời đất ơi
+太好了	Tốt quá rồi
+真是太好了	Thật sự tốt quá rồi
+太棒了	Tuyệt vời quá
+干得好	Làm tốt lắm
+干得漂亮	Làm đẹp lắm
+我知道了	Tôi biết rồi
+知道了	Biết rồi
+我明白	Tôi hiểu
+我明白了	Tôi hiểu rồi
+明白	Rõ
+原来如此	Hóa ra là vậy
+原来是这样	Thì ra là như vậy
+怪不得	Thảo nào
+难怪	Chẳng trách
+果然	Quả nhiên
+果然如此	Quả nhiên là vậy
+不出所料	Đúng như dự đoán
+难道	Chẳng lẽ
+难道说	Chẳng lẽ là
+莫非	Chẳng lẽ
+当然	Đương nhiên
+当然了	Đương nhiên rồi
+那当然	Đương nhiên rồi
+没问题	Không thành vấn đề
+包在我身上	Cứ để tôi lo
+交给我吧	Cứ giao cho tôi
+交给你了	Giao cho bạn đấy
+拜托了	Nhờ cả vào bạn
+拜托你了	Trông cậy vào bạn đấy
+好的	Được
+好吧	Được thôi
+行吧	Cũng được
+可以	Được
+随便你	Tùy bạn
+算了吧	Bỏ đi
+算了	Thôi bỏ đi
+没关系了	Không sao nữa rồi
+快走	Mau đi thôi
+快跑	Mau chạy đi
+快逃	Mau chạy trốn
+快点	Nhanh lên
+动作快点	Hành động nhanh lên
+赶紧走	Mau đi nhanh
+我们走	Chúng ta đi thôi
+走吧	Đi thôi
+出发	Xuất phát
+出发吧	Lên đường thôi
+跟我来	Đi theo tôi
+跟上	Bám theo
+跟我们走一趟	Đi theo chúng tôi một chuyến
+回去吧	Quay về thôi
+回家吧	Về nhà thôi
+我回来了	Tôi về rồi đây
+欢迎回来	Mừng bạn trở về
+小心	Cẩn thận
+小心点	Cẩn thận một chút
+当心	Coi chừng
+注意安全	Chú ý an toàn
+救命	Cứu mạng
+救命啊	Cứu mạng với
+救我	Cứu tôi với
+快来人	Người đâu mau tới
+有人吗	Có ai ở đó không
+冷静点	Bình tĩnh lại đi
+冷静一下	Bình tĩnh chút đi
+别冲动	Đừng kích động
+别慌	Đừng hoảng
+听我解释	Nghe tôi giải thích đã
+你听我说	Bạn nghe tôi nói này
+相信我	Hãy tin tôi
+我相信你	Tôi tin bạn
+别害怕	Đừng sợ
+不用怕	Không cần sợ
+有我在	Có tôi ở đây rồi
+我会保护你的	Tôi sẽ bảo vệ bạn
+我喜欢你	Tôi thích bạn
+我爱你	Anh yêu em
+我想你	Tôi nhớ bạn
+对不起我来晚了	Xin lỗi, tôi đến muộn
+辛苦了	Vất vả cho bạn rồi
+别说了	Đừng nói nữa
+够了	Đủ rồi
+已经够了	Đã đủ lắm rồi
+到此为止	Dừng lại ở đây thôi
+我不会放过你的	Ta sẽ không tha cho ngươi đâu
+你给我等着	Ngươi cứ đợi đấy
+走着瞧	Cứ chống mắt lên xem
+我马上来	Tôi đến ngay
+我马上到	Tôi tới ngay
+师父	Sư phụ
+师尊	Sư tôn
+师兄	Sư huynh
+大师兄	Đại sư huynh
+师姐	Sư tỷ
+师弟	Sư đệ
+师妹	Sư muội
+小师妹	Tiểu sư muội
+掌门	Chưởng môn
+宗主	Tông chủ
+教主	Giáo chủ
+门主	Môn chủ
+阁主	Các chủ
+谷主	Cốc chủ
+家主	Gia chủ
+族长	Tộc trưởng
+长老	Trưởng lão
+大长老	Đại trưởng lão
+太上长老	Thái thượng trưởng lão
+前辈	Tiền bối
+晚辈	Vãn bối
+道友	Đạo hữu
+道友请留步	Đạo hữu xin dừng bước
+在下	Tại hạ
+老夫	Lão phu
+本座	Bản tọa
+本尊	Bản tôn
+本王	Bản vương
+本少爷	Bản thiếu gia
+本小姐	Bản tiểu thư
+公子	Công tử
+少爷	Thiếu gia
+大小姐	Đại tiểu thư
+小姐	Tiểu thư
+姑娘	Cô nương
+夫人	Phu nhân
+老爷	Lão gia
+陛下	Bệ hạ
+皇上	Hoàng thượng
+皇后	Hoàng hậu
+太后	Thái hậu
+太子	Thái tử
+太子殿下	Thái tử điện hạ
+殿下	Điện hạ
+王爷	Vương gia
+公主	Công chúa
+娘娘	Nương nương
+大人	Đại nhân
+丞相	Thừa tướng
+将军	Tướng quân
+大将军	Đại tướng quân
+统领	Thống lĩnh
+护卫	Hộ vệ
+属下	Thuộc hạ
+属下在	Có thuộc hạ
+遵命	Tuân lệnh
+领命	Lĩnh mệnh
+属下遵命	Thuộc hạ tuân lệnh
+属下明白	Thuộc hạ đã rõ
+属下该死	Thuộc hạ đáng chết
+属下知罪	Thuộc hạ biết tội
+微臣遵旨	Vi thần tuân chỉ
+谢主隆恩	Tạ ơn long ân của bệ hạ
+吾皇万岁	Ngô hoàng vạn tuế
+平身	Bình thân
+免礼	Miễn lễ
+退下	Lui xuống đi
+都退下吧	Tất cả lui xuống đi
+来人	Người đâu
+来人啊	Người đâu
+拿下	Bắt lấy
+给我拿下	Bắt lấy hắn cho ta
+格杀勿论	Giết không tha
+护驾	Hộ giá
+放肆	Làm càn
+大胆	To gan
+岂有此理	Thật quá quắt
+手下留情	Xin hạ thủ lưu tình
+刀下留人	Đao hạ lưu nhân
+饶命	Tha mạng
+饶命啊	Xin tha mạng
+前辈饶命	Tiền bối tha mạng
+别杀我	Đừng giết tôi
+求求你	Cầu xin ngươi
+多谢前辈	Đa tạ tiền bối
+多谢师尊	Đa tạ sư tôn
+多谢师父	Đa tạ sư phụ
+多谢师兄	Đa tạ sư huynh
+多谢师姐	Đa tạ sư tỷ
+多谢掌门	Đa tạ chưởng môn
+多谢大人	Đa tạ đại nhân
+多谢公子	Đa tạ công tử
+多谢成全	Đa tạ đã thành toàn
+拜见师尊	Bái kiến sư tôn
+拜见师父	Bái kiến sư phụ
+拜见掌门	Bái kiến chưởng môn
+拜见陛下	Bái kiến bệ hạ
+恭迎师尊	Cung nghênh sư tôn
+得罪了	Đắc tội rồi
+失陪了	Thất bồi rồi
+告辞	Cáo từ
+后会有期	Hậu hội hữu kỳ
+恕难从命	Thứ cho khó lòng tuân mệnh
+找死	Muốn chết
+敢尔	Dám làm càn
+简直找死	Đúng là muốn chết
+你在找死	Ngươi đang tự tìm cái chết
+不知死活	Không biết sống chết
+自不量力	Tự lượng sức mình đi
+不自量力	Không tự lượng sức
+狂妄	Cuồng vọng
+狂妄至极	Cuồng vọng tột cùng
+受死吧	Chịu chết đi
+纳命来	Nộp mạng đi
+去死吧	Chết đi
+看招	Xem chiêu
+接招吧	Tiếp chiêu đây
+雕虫小技	Tài mọn
+不堪一击	Không chịu nổi một đòn
+不过如此	Cũng chỉ đến thế mà thôi
+好强的气息	Khí tức mạnh quá
+好强的威压	Uy áp thật khủng khiếp
+好恐怖的实力	Thực lực thật đáng sợ
+好快的速度	Tốc độ nhanh quá
+他竟然突破了	Hắn vậy mà lại đột phá rồi
+突破了	Đột phá rồi
+突破境界	Đột phá cảnh giới
+走火入魔	Tẩu hỏa nhập ma
+练气期	Luyện Khí kỳ
+筑基期	Trúc Cơ kỳ
+金丹期	Kim Đan kỳ
+元婴期	Nguyên Anh kỳ
+化神期	Hóa Thần kỳ
+渡劫期	Độ Kiếp kỳ
+大乘期	Đại Thừa kỳ
+储物戒	Nhẫn trữ vật
+空间戒指	Nhẫn không gian
+天材地宝	Thiên tài địa bảo
+与此同时	Cùng lúc đó
+另一边	Ở một diễn biến khác
+就在这时	Đúng vào lúc này
+突然	Đột nhiên
+第二天	Ngày hôm sau
+三天后	Ba ngày sau
+半年后	Nửa năm sau
+一年后	Một năm sau
+几分钟后	Vài phút sau
+片刻之后	Một lát sau
+不久之后	Không lâu sau
+回忆	Hồi ức
+系统	Hệ thống
+恭喜宿主	Chúc mừng ký chủ
+任务完成	Nhiệm vụ hoàn thành
+任务失败	Nhiệm vụ thất bại
+获得奖励	Nhận được phần thưởng
+主线任务	Nhiệm vụ chính tuyến
+支线任务	Nhiệm vụ phụ
+隐藏任务	Nhiệm vụ ẩn
+等级提升	Tăng cấp
+属性面板	Bảng thuộc tính
+技能冷却	Hồi chiêu kỹ năng
+生命值	Điểm sinh mệnh
+攻击力	Sức tấn công
+防御力	Sức phòng thủ
+确认	Xác nhận
+取消	Hủy bỏ
+确定	Đồng ý
+返回	Quay lại
+继续	Tiếp tục
+跳过	Bỏ qua
+设置	Cài đặt
+开始游戏	Bắt đầu trò chơi
+继续游戏	Tiếp tục trò chơi
+退出游戏	Thoát trò chơi
+未完待续	Còn tiếp
+待续	Còn tiếp
+本集完	Hết tập này
+本章完	Hết chương này
+全剧终	Hết phim
+奉天承运	Phụng thiên thừa vận
+皇帝诏曰	Hoàng đế chiếu viết
+奉天承运皇帝诏曰	Phụng thiên thừa vận, hoàng đế chiếu viết
+臣妾冤枉	Thần thiếp oan uổng quá
+皇上臣妾冤枉	Hoàng thượng, thần thiếp oan uổng quá
+皇上臣妾冤枉啊	Hoàng thượng, thần thiếp oan uổng quá
+路见不平	Giữa đường thấy chuyện bất bình
+拔刀相助	Rút đao tương trợ
+路见不平拔刀相助	Giữa đường thấy chuyện bất bình, rút đao tương trợ
+人在江湖	Người trong giang hồ
+身不由己	Thân bất do kỷ
+人在江湖身不由己	Người trong giang hồ, thân bất do kỷ
+路见不平拔刀相助人在江湖身不由己	Giữa đường thấy chuyện bất bình, rút đao tương trợ, người trong giang hồ, thân bất do kỷ
+有话好说	Có chuyện gì từ từ nói
+道友请留步有话好说	Đạo hữu xin dừng bước, có chuyện gì từ từ nói
+做我女朋友	Làm bạn gái anh nhé
+做我女朋友吧	Làm bạn gái anh nhé
+我喜欢你做我女朋友吧	Anh thích em, làm bạn gái anh nhé
+不管发生什么事	Bất kể xảy ra chuyện gì
+我都会一直在你身边	Anh cũng sẽ luôn ở bên cạnh em
+不管发生什么事我都会一直在你身边	Bất kể xảy ra chuyện gì, anh cũng sẽ luôn ở bên cạnh em
+弟子知错了	Đệ tử biết lỗi rồi
+请师尊责罚	Xin sư tôn trách phạt
+师尊弟子知错了请师尊责罚	Sư tôn, đệ tử biết lỗi rồi, xin sư tôn trách phạt
+

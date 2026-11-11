@@ -7,4 +7,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "GeminiOCR"
 include(":app")
+include(":ocr-candidate")
 

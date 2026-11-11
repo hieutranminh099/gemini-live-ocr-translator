@@ -62,6 +62,61 @@ object SecureConnection {
             }
         } finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
     }
+    suspend fun connectDiscovered(settings: AppSettings, pc: DiscoveredPc, name: String) = withContext(Dispatchers.IO) {
+        val normalizedHost = host(pc.host)
+        val normalizedPin = pc.pin.lowercase().replace(":", "").trim()
+        val client = client(normalizedPin)
+        try {
+            val existingToken = settings.token
+            if (existingToken.isNotBlank() && settings.pin.equals(normalizedPin, ignoreCase = true)) {
+                val checkReq = Request.Builder()
+                    .url("https://$normalizedHost/v1/auth-check")
+                    .header("Authorization", "Bearer $existingToken")
+                    .get()
+                    .build()
+                val stillValid = try {
+                    client.newCall(checkReq).execute().use { it.isSuccessful }
+                } catch (_: Exception) {
+                    false
+                }
+                if (stillValid) {
+                    currentCoroutineContext().ensureActive()
+                    settings.host = normalizedHost
+                    withContext(Dispatchers.Main) {
+                        SessionState.connected.value = true
+                        SessionState.status.value = "Đã tự động kết nối với ${pc.name} ($normalizedHost)"
+                    }
+                    return@withContext
+                }
+            }
+            require(pc.lanTicket.isNotBlank()) { "Máy tính chưa cấp tín hiệu ghép cặp tự động. Hãy thử quét lại." }
+            val body = JSONObject()
+                .put("name", name.take(64))
+                .put("lan_ticket", pc.lanTicket)
+                .toString()
+            val request = Request.Builder()
+                .url("https://$normalizedHost/v1/pair")
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Không thể ghép cặp tự động với ${pc.name}. Hãy thử quét lại.")
+                }
+                val json = JSONObject(response.body!!.string())
+                val token = json.getString("token")
+                require(token.length >= 32)
+                currentCoroutineContext().ensureActive()
+                settings.savePairing(normalizedHost, normalizedPin, token)
+                withContext(Dispatchers.Main) {
+                    SessionState.connected.value = true
+                    SessionState.status.value = "Đã tự động kết nối với ${pc.name} ($normalizedHost)"
+                }
+            }
+        } finally {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        }
+    }
 }
 
 class TranslationClient(private val settings: AppSettings, private val scope: CoroutineScope,

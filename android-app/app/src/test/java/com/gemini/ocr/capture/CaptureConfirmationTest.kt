@@ -81,4 +81,15 @@ class CaptureConfirmationTest {
         assertTrue(waiting.isActive)
         waiting.cancelAndJoin()
     }
+
+    @Test fun pendingConfirmationDoesNotInheritSlowOcrBackoff() {
+        field("lastOcrWorkMs").setLong(service, 400L)
+        val period = ScreenCaptureService::class.java.getDeclaredMethod("capturePeriodMs").apply { isAccessible = true }
+        assertEquals(600L, period.invoke(service))
+        message(response())
+        assertEquals("The guard still waits for a new image but capture polls at bounded spacing", 50L, period.invoke(service))
+        assertEquals("", SessionState.lastTranslation.value)
+        field("lastFrameSourceAt").setLong(service, field("replyAt").getLong(service))
+        assertEquals(600L, period.invoke(service))
+    }
 }

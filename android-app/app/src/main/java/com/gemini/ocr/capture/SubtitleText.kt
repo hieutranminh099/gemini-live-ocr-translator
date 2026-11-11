@@ -4,6 +4,18 @@ import java.text.Normalizer
 import java.util.Locale
 
 object SubtitleText {
+    /**
+     * The live film trace alternated 進/进 and 來/来 inside the same visible cue.
+     * Compare only these unambiguous script variants; never repair missing glyphs,
+     * names, negation or quantities. The recognized source itself stays unchanged.
+     */
+    fun sourceIdentity(text: String, language: String): String {
+        val key = identity(text)
+        return if (language == "zh") key.map { character ->
+            when (character) { '進' -> '进'; '來' -> '来'; else -> character }
+        }.joinToString("") else key
+    }
+
     // OCR may insert spaces between Chinese/Japanese characters. Latin and Korean word
     // boundaries carry meaning: "now here" and "nowhere" must never share a cache entry.
     // Preserve gaps/underscores and question/exclamation marks rather than invent missing text.

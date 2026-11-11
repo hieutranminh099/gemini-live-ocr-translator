@@ -1,0 +1,30 @@
+{
+  "kind": "LOCAL_DEBUG_MODEL_PROFILE_NOT_APPROVED_FOR_DISTRIBUTION",
+  "source_package": "rapidocr-onnxruntime",
+  "source_package_version": "1.4.4",
+  "source_git_revision": null,
+  "local_package_license_declaration": "Apache-2.0",
+  "model_distribution_license_independently_verified": false,
+  "metadata_only_no_inference": true,
+  "recognizer_metadata_characters": 6623,
+  "recognizer_metadata_character_sha256": "28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7",
+  "generated_yml_sha256": "23521ee42483e688514fc4fb6b5c47f254af3e56fb2208d4d2445beb10065569",
+  "generated_yml_bytes": 66093,
+  "ctc_classes_after_ModelConfig_appends_space_and_blank": 6625,
+  "models": [
+    {
+      "name": "ch_PP-OCRv4_det_infer.onnx",
+      "bytes": 4745517,
+      "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+      "ir_version": 8,
+      "opset": 12
+    },
+    {
+      "name": "ch_PP-OCRv4_rec_infer.onnx",
+      "bytes": 10857958,
+      "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+      "ir_version": 8,
+      "opset": 12
+    }
+  ]
+}

@@ -1,10 +1,14 @@
-# Gemini Live OCR Translator — Android / Windows 1.7.0
+# Gemini Live OCR Translator — Android / Windows
+
+**Bản thử cá nhân trên Windows:** mở [Mo-Dich-Phim-Ca-Nhan.cmd](Mo-Dich-Phim-Ca-Nhan.cmd), chọn **Continue with ChatGPT**, cấp quyền dùng gói và chọn phim. App tự trích xuất/dịch/lưu tiến độ/xuất SRT và MP4, dùng kết nối chính thức riêng với dữ liệu mặc định trên E:. Đã xác nhận kết nối của chủ máy và chạy trọn luồng với video tổng hợp 3 câu qua ChatGPT thật. [Luồng dùng và kiểm chứng](docs/PERSONAL_AUTOMATIC_VIDEO.md).
+
+**Bản Android hiện tại:** [Gemini OCR 1.8.13](https://github.com/hieutranminh099/gemini-live-ocr-translator/releases/download/v1.8.13/GeminiOCR-1.8.13-pipeline.apk), xử lý theo từng tập, cho phép trích tập sau trong lúc dịch tập trước khi đủ tài nguyên. Lưu hoàn tất từng tập và phục hồi an toàn khi worker bị ngắt; giữ thêm tập vào Kho phim, tua chọn vùng OCR, 8 GB/16 GB và ba khóa Gemini. [Kiểm chứng 1.8.13](docs/BATCH_PIPELINE_V1813.md).
 
 Android đọc phụ đề bằng ML Kit, Windows quản lý bản dịch và gửi kết quả về lớp phủ. Dự án được cập nhật trực tiếp, giữ dữ liệu, ghép cặp và tính năng một khung/tự động.
 
 Repository Private của **dự án hiện có**: [hieutranminh099/gemini-live-ocr-translator](https://github.com/hieutranminh099/gemini-live-ocr-translator). Chủ dự án đã phê duyệt nhập mã nguồn hiện tại và tạo nhánh `main`, `codex-dev`, `gemini-review`. [Quy trình Codex/Gemini CLI và worktree](docs/GITHUB_COLLABORATION.md), [hướng dẫn cho Gemini](GEMINI.md). Các báo cáo thô ở `docs/results/` được giữ cục bộ và loại khỏi phạm vi GitHub; không xóa dữ liệu đang sử dụng.
 
-Mã đang phát triển hướng tới 1.7.1 với sửa lịch chờ API và đánh thức capture; chưa phát hành hay cài thay bản 1.7.0. Chưa chứng minh mọi câu mới đạt một giây. Các mục phiên bản/kiểm thử 1.7.0 bên dưới mô tả bản đã giao.
+Mã Android hiện tại ở thư mục `android-app`. Các mục kiểm thử 1.7.0 bên dưới ghi lại bản giao Windows và Android trước đây.
 
 **Bản 1.7.0 bổ sung AI Video Translator và Kho dịch thuật dùng chung với Live OCR.** Nhập video, ưu tiên luồng phụ đề văn bản hoặc OCR chữ ghi cứng, dịch bằng Gemini API, sửa timeline và xuất SRT/ASS/MP4. Tích lũy Translation Memory mặc định tắt; bản AI mới là Draft và chỉ bản đã xác minh/xác nhận được dùng lại. [Cách dùng, kiểm thử và giới hạn 1.7.0](docs/VIDEO_TRANSLATOR_V170.md).
 
@@ -20,7 +24,7 @@ Prototype OPUS-MT/CTranslate2 chạy riêng đã đo 100 câu tham chiếu trên
 
 | Tệp trong dist/ | Công dụng |
 |---|---|
-| GeminiOCR-Android.apk | Android 1.7.0, Android 8+, kèm mô hình OCR Live Anh/Nhật/Trung/Hàn và trạng thái ưu tiên capture |
+| [GeminiOCR-1.8.13-pipeline.apk](https://github.com/hieutranminh099/gemini-live-ocr-translator/releases/download/v1.8.13/GeminiOCR-1.8.13-pipeline.apk) | Bản Android đang dùng |
 | GeminiOCR-Windows-Setup.exe | Bộ cài Windows 1.7.0 x64 |
 | GeminiOCR.exe | Companion chạy trực tiếp, kèm runtime media, không cần Python/Node.js |
 | GeminiOCR-Source.zip | Mã nguồn, kiểm thử và báo cáo; không kèm khóa, dữ liệu riêng, model/runtime local |

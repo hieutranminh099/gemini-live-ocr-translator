@@ -22,8 +22,10 @@ import java.util.Locale;
 /** Separate-APK synthetic scene. Java keeps it independent of the target APK's Kotlin runtime. */
 public class TestSceneActivity extends Activity {
     private boolean animated;
+    private boolean movingBackground;
     private View scene;
     private String sourceText = "Hello traveler";
+    private String hardcodedVietnamese = "";
     private boolean subtitle;
     private float subtitleBaseline = .9f;
     private float subtitleSp = 30f;
@@ -39,13 +41,17 @@ public class TestSceneActivity extends Activity {
         if (scene != null) scene.invalidate();
     };
     private void configure(Intent intent) {
+        if (intent.getBooleanExtra("landscape", false))
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         handler.removeCallbacks(nextScene);
         animated = intent.getBooleanExtra("animate", false);
+        movingBackground = intent.getBooleanExtra("movingBackground", false);
         subtitle = intent.getBooleanExtra("subtitle", false);
         subtitleBaseline = intent.getFloatExtra("subtitleBaseline", .9f);
         subtitleSp = intent.getFloatExtra("subtitleSp", 30f);
         sourceCenter = intent.getFloatExtra("sourceCenter", .5f);
         if (intent.getStringExtra("sourceText") != null) sourceText = intent.getStringExtra("sourceText");
+        hardcodedVietnamese = intent.getStringExtra("hardcodedVietnamese") == null ? "" : intent.getStringExtra("hardcodedVietnamese");
         eventId = intent.getStringExtra("eventId") == null ? "scene" : intent.getStringExtra("eventId");
         sequence = null;
         String encoded = intent.getStringExtra("sequenceJson");
@@ -94,12 +100,26 @@ public class TestSceneActivity extends Activity {
                     paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
                     canvas.drawText(sourceText, getWidth() * sourceCenter - paint.measureText(sourceText) / 2, getHeight() * subtitleBaseline, paint);
                     paint.setTypeface(android.graphics.Typeface.DEFAULT);
+                    if (!hardcodedVietnamese.isEmpty()) {
+                        paint.setColor(Color.WHITE);
+                        paint.setTextSize(subtitleSp * .7f * getResources().getDisplayMetrics().density);
+                        canvas.drawText(hardcodedVietnamese, getWidth() * sourceCenter - paint.measureText(hardcodedVietnamese) / 2,
+                            getHeight() * (subtitleBaseline + .08f), paint);
+                    }
                 } else canvas.drawText(sourceText, 50f, getHeight()*.55f, paint);
                 // Keep movement outside the subtitle ROI; the previous timer was covered by the background.
                 if (animated) {
                     paint.setColor(Color.rgb(150,173,186));
                     paint.setTextSize(22f * getResources().getDisplayMetrics().density);
                     canvas.drawText("Time: " + SystemClock.elapsedRealtime()/250, 32f, 110f, paint);
+                }
+                // Camera-like motion INSIDE the OCR strip, away from the centered glyphs.
+                // This changes the complete-ROI CRC without changing subtitle text or bounds.
+                if (movingBackground) {
+                    int phase = (int) ((SystemClock.elapsedRealtime() / 16L) % 32L);
+                    paint.setColor(Color.rgb(20 + phase, 35, 45));
+                    canvas.drawRect(getWidth() * .01f, getHeight() * .76f,
+                        getWidth() * .20f, getHeight() * .86f, paint);
                 }
                 if (announceDraw) {
                     announceDraw = false;
@@ -113,14 +133,17 @@ public class TestSceneActivity extends Activity {
                         handler.postDelayed(nextScene, Math.max(16L, sequence.optJSONObject(sequenceIndex).optLong("durationMs", 3000L)));
                     }
                 }
-                if (animated) postInvalidateDelayed(250);
+                if (movingBackground) postInvalidateDelayed(16);
+                else if (animated) postInvalidateDelayed(250);
             }
         };
+        scene.setContentDescription("gemini-live-scene:" + eventId);
         setContentView(scene);
     }
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         configure(intent);
+        scene.setContentDescription("gemini-live-scene:" + eventId);
         scene.invalidate();
     }
     @Override protected void onDestroy() {

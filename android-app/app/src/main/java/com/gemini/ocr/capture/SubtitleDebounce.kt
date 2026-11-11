@@ -21,9 +21,21 @@ class SubtitleDebounce {
         while (changes.size > RAPID_CHANGE_COUNT) changes.removeFirst()
     }
 
-    fun remainingMs(now: Long): Long {
+    fun remainingMs(now: Long): Long = remainingMs(now, turbo = false, standaloneZeroDebounce = false)
+
+    fun remainingMs(now: Long, turbo: Boolean, standaloneZeroDebounce: Boolean = false): Long {
         val changed = changedAt ?: return 0
-        val settling = if (changes.size >= RAPID_CHANGE_COUNT) JITTER_SETTLE_MS else INITIAL_SETTLE_MS
+        val initialSettle = when {
+            standaloneZeroDebounce -> STANDALONE_ZERO_SETTLE_MS
+            turbo -> TURBO_INITIAL_SETTLE_MS
+            else -> INITIAL_SETTLE_MS
+        }
+        val jitterSettle = when {
+            standaloneZeroDebounce -> STANDALONE_JITTER_SETTLE_MS
+            turbo -> TURBO_JITTER_SETTLE_MS
+            else -> JITTER_SETTLE_MS
+        }
+        val settling = if (changes.size >= RAPID_CHANGE_COUNT) jitterSettle else initialSettle
         return (settling - (now - changed).coerceAtLeast(0)).coerceAtLeast(0)
     }
 
@@ -32,6 +44,10 @@ class SubtitleDebounce {
     private companion object {
         const val INITIAL_SETTLE_MS = 90L
         const val JITTER_SETTLE_MS = 180L
+        const val TURBO_INITIAL_SETTLE_MS = 25L
+        const val TURBO_JITTER_SETTLE_MS = 70L
+        const val STANDALONE_ZERO_SETTLE_MS = 0L
+        const val STANDALONE_JITTER_SETTLE_MS = 35L
         const val CHANGE_WINDOW_MS = 1000L
         const val RAPID_CHANGE_COUNT = 3
     }

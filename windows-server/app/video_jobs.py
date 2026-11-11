@@ -77,6 +77,48 @@ def _segments(rows, duration):
     return result
 
 
+def _source_coverage(segments, duration_ms):
+    """Called only after the complete OCR iterator and its PTS checks finish.
+
+    Sparse visible subtitles are evidence, not a failed OCR result. Audio may
+    supplement their gaps; it must never replace or erase those visible cues.
+    """
+    covered = sum(item.end_ms - item.start_ms for item in segments)
+    ratio = min(1., covered / max(1, duration_ms))
+    return dict(ocr_cues=len(segments), covered_ms=covered, duration_ms=duration_ms,
+        coverage=round(ratio, 6), needs_audio_check=not segments or (duration_ms >= 30000 and ratio < .08),
+        reason='no_visible_subtitles' if not segments else 'sparse_visible_subtitles' if ratio < .08 else 'visible_subtitles')
+
+
+def _supplement_gaps(visible, speech):
+    """Keep OCR as authority; never guess how to split an overlapping ASR cue."""
+    result, index = list(visible), 0
+    for item in speech:
+        while index < len(visible) and visible[index].end_ms + 150 <= item.start_ms:
+            index += 1
+        if index < len(visible) and visible[index].start_ms - 150 < item.end_ms:
+            continue
+        result.append(item)
+    return sorted(result, key=lambda item: (item.start_ms, item.end_ms, item.id))
+
+
+def _recognition_rows(segments, previous):
+    old = {row['id']: row for row in previous}
+    ids = {item.id for item in segments}
+    if any(row['id'] not in ids and (row.get('translation', '').strip() or row.get('quality') == 'user_approved')
+            for row in previous):
+        raise VideoMediaError('source_checkpoint_conflict',
+            'Nguồn mới khác câu đã chỉnh/duyệt. Giữ checkpoint hiện có; nhập dự án mới để nhận diện lại.')
+    rows = []
+    for item in segments:
+        row = dict(old[item.id]) if item.id in old else dict(item.as_dict(), quality='draft')
+        if item.source_type == 'SPEECH':
+            row.setdefault('review_required', item.confidence is None or item.confidence < .65)
+            row.setdefault('recognition_note', 'ASR confidence is not a calibrated accuracy score; verify against audio.')
+        rows.append(row)
+    return rows
+
+
 class VideoJobService:
     def __init__(self,directory,manager,*,tools=None,recognizer_factory=None,speech_processor=None):
         self.directory=Path(directory).resolve()
@@ -270,6 +312,10 @@ class VideoJobService:
         rows=await asyncio.to_thread(self._read_timeline,ident)
         if changed and rows:
             raise VideoMediaError('source_options_changed','Dự án đã có phụ đề. Nhập một dự án mới để đổi nguồn nhận diện hoặc vùng OCR.')
+        if changed:
+            for key in ('extraction_phase','extraction_progress_ms','speech_progress_ms','ocr_last_frame_ms',
+                    'ocr_frames_observed','source_coverage','source_warning'):
+                job.pop(key,None)
         # Reusing a checkpoint with different model/style/context must be explicit.
         glossary=self.manager.store.glossary(opts.profile)
         glossary_hash=hashlib.sha256(json.dumps(glossary,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -306,13 +352,23 @@ class VideoJobService:
                 text_streams=[s for s in streams if s['type']=='subtitle' and s.get('is_text')]
                 if method=='auto':
                     method='subtitle' if text_streams else ('speech' if opts.source=='ko' else 'ocr')
+                # Persisted speech phase means OCR already completed, including
+                # a sparse valid OCR timeline. Recovery must not scan it again.
+                resumed_speech = job.get('extraction_phase') == 'speech'
+                if resumed_speech:
+                    method='speech'
                 job['extraction_method']=method
                 if method=='subtitle':
                     index=opts.stream_index if opts.stream_index is not None else (text_streams[0]['index'] if text_streams else None)
                     if index is None:
                         raise VideoMediaError('no_text_subtitles','Không có luồng phụ đề văn bản. Hãy chọn OCR hoặc Speech.')
                     segments=await extract_subtitle_stream(folder/job['input'],index,self.tools,wait_ready=ready,cancel_event=self.cancel_event)
-                elif method=='ocr':
+                    # A text track can be empty. Only AUTO may proceed to the
+                    # next source; explicit source selection stays explicit.
+                    if not segments and opts.method=='auto':
+                        method='speech' if opts.source=='ko' else 'ocr'
+                        job['extraction_method']=method
+                if method=='ocr':
                     if opts.source=='ko':
                         raise VideoMediaError('ocr_language_unavailable','OCR video tiếng Hàn chưa vượt kiểm tra chất lượng. Chọn Subtitle hoặc Speech; chưa gửi văn bản OCR lỗi tới Gemini.')
                     from .video_ocr import ocr_video, RapidOcrRecognizer
@@ -324,25 +380,63 @@ class VideoJobService:
                             saved.append(row)
                         job['extraction_progress_ms']=pts
                         await self._write_timeline(job,saved)
+                    async def ocr_progress(value):
+                        if value < 1.:
+                            job['ocr_last_frame_ms']=max(job.get('ocr_last_frame_ms',0),round(value*job['metadata']['duration_ms']))
+                            job['ocr_frames_observed']=job.get('ocr_frames_observed',0)+1
+                        await progress(value)
                     segments=await ocr_video(folder/job['input'],self.tools,recognizer=recognizer,roi=opts.roi,
-                        language=opts.source,wait_ready=ready,cancel_event=self.cancel_event,progress=progress,
+                        language=opts.source,wait_ready=ready,cancel_event=self.cancel_event,progress=ocr_progress,
                         start_ms=job.get('extraction_progress_ms',0),checkpoint=checkpoint)
                     segments=[VideoSegment(**{k:row[k] for k in VideoSegment.__dataclass_fields__ if k in row}) for row in saved]
-                else:
+                    duration=job['metadata']['duration_ms']
+                    if (not job.get('ocr_frames_observed') or
+                            duration-job.get('ocr_last_frame_ms',0)>2000) and job.get('extraction_progress_ms',0)<duration:
+                        raise VideoMediaError('ocr_scan_incomplete',
+                            'Chưa xác minh đã đọc đủ khung OCR. Kiểm tra video/vùng chữ; không tự coi đây là video không có phụ đề.')
+                    segments=_segments(segments,duration)
+                    job['source_coverage']=_source_coverage(segments,duration)
+                    if opts.method=='auto' and job['source_coverage']['needs_audio_check'] and any(s['type']=='audio' for s in streams):
+                        from .video_speech import speech_capability
+                        available=bool(self.speech_processor or speech_capability(self.speech_model())['available'])
+                        if segments and not available:
+                            job['source_warning']='Phụ đề hình ảnh thưa. Các câu OCR được giữ; chuẩn bị ASR hoặc kiểm tra ROI để tìm lời thoại còn thiếu.'
+                        else:
+                            await asyncio.to_thread(_atomic_json,folder/'source-ocr.json',[item.as_dict() for item in segments])
+                            method='speech'
+                            job['extraction_phase']='speech'
+                            await self._save(job)
+                if method=='speech':
+                    visible=[]
+                    if (resumed_speech or job.get('extraction_phase')=='speech') and (folder/'source-ocr.json').is_file():
+                        visible=_segments(json.loads(await asyncio.to_thread((folder/'source-ocr.json').read_text,encoding='utf-8')),job['metadata']['duration_ms'])
+                        edited={row['id']:row for row in rows if row.get('source_type')=='OCR'}
+                        visible=_segments([edited.get(item.id,item) for item in visible],job['metadata']['duration_ms'])
+                    job['extraction_phase']='speech'
+                    job['extraction_method']='ocr+speech' if visible else 'speech'
+                    await self._save(job)
+                    async def speech_checkpoint(current,pts):
+                        nonlocal rows
+                        combined=_segments(_supplement_gaps(visible,current),job['metadata']['duration_ms'])
+                        rows=_recognition_rows(combined,rows)
+                        _segments(rows,job['metadata']['duration_ms'])
+                        job['speech_progress_ms']=pts
+                        await self._write_timeline(job,rows)
                     from .video_speech import speech_video
-                    segments=await (self.speech_processor or speech_video)(folder/job['input'],self._metadata(job),self.tools,
-                        source=opts.source,model_dir=self.speech_model(),wait_ready=ready,cancel_event=self.cancel_event,progress=progress)
-                if not segments and opts.method=='auto' and method=='ocr' and any(s['type']=='audio' for s in streams):
-                    job['extraction_method']='speech'
-                    from .video_speech import speech_video
-                    segments=await (self.speech_processor or speech_video)(folder/job['input'],self._metadata(job),self.tools,
-                        source=opts.source,model_dir=self.speech_model(),wait_ready=ready,cancel_event=self.cancel_event,progress=progress)
+                    spoken=await (self.speech_processor or speech_video)(folder/job['input'],self._metadata(job),self.tools,
+                        source=opts.source,model_dir=self.speech_model(),wait_ready=ready,cancel_event=self.cancel_event,
+                        progress=progress,checkpoint=speech_checkpoint)
+                    segments=_supplement_gaps(visible,_segments(spoken,job['metadata']['duration_ms']))
+                    if visible:
+                        job['source_warning']='OCR được giữ nguyên; ASR chỉ bổ sung các câu không chồng vùng thời gian OCR. Hãy kiểm tra các khoảng trống và ROI.'
                 segments=_segments([replace(s,language=opts.source) for s in segments],job['metadata']['duration_ms'])
                 if not segments:
                     raise VideoMediaError('no_segments','Chưa nhận được câu nguồn. Kiểm tra luồng phụ đề, ROI hoặc chọn Speech.')
-                rows=[dict(s.as_dict(),quality='draft') for s in segments]
-                job['extraction_complete']=True
+                rows=_recognition_rows(segments,rows)
+                _segments(rows,job['metadata']['duration_ms'])
                 await self._write_timeline(job,rows)
+                job['extraction_complete']=True
+                await self._save(job)
             missing={}
             for row in rows:
                 if not row.get('translation','').strip():
@@ -392,8 +486,9 @@ class VideoJobService:
         except (TranslationError,VideoMediaError) as error:
             job['status']='failed';job['error']=str(error);job['error_code']=error.code
             if getattr(error,'retry_after_ms',None):job['retry_after_ms']=error.retry_after_ms
-        except Exception:
+        except Exception as error:
             job['status']='failed';job['error']='Lỗi xử lý video. Checkpoint trước đó được giữ; không ghi nội dung video vào log.'
+            job['error_code']='video_processing_failed';job['error_type']=type(error).__name__[:80]
         finally:
             await self._save(job)
             self.manager.contexts={k:v for k,v in self.manager.contexts.items() if k[0]!='video:'+ident}
@@ -446,7 +541,7 @@ class VideoJobService:
             elif (row.get('translation','') and (row.get('translation')!=old_translation or change.get('quality')=='user_approved')):
                 row['quality']='user_approved';approved.append(row)
         validated=_segments(rows,job['metadata']['duration_ms'])
-        rows=[dict(s.as_dict(),quality=mapping[s.id].get('quality','draft')) for s in validated]
+        rows=[dict(mapping[s.id],**s.as_dict(),quality=mapping[s.id].get('quality','draft')) for s in validated]
         await self._write_timeline(job,rows)
         if approved:await self._approve_memory(job,approved)
         job['outputs']={};job['status']='ready';await self._save(job)

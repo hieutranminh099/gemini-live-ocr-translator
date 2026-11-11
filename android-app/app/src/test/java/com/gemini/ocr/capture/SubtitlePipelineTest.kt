@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SubtitlePipelineTest {
+    @Test fun explicitRetranslationReplacesTheTokenWithoutAcceptingTheOldRequest() {
+        val pipeline = SubtitlePipeline("region")
+        pipeline.observe("same sentence")
+        val old = pipeline.request("old")!!
+        assertNull(pipeline.request("duplicate"))
+        val replacement = pipeline.request("explicit", replaceCurrent = true)!!
+        assertFalse(pipeline.accepts(old))
+        assertTrue(pipeline.accepts(replacement))
+        assertEquals(old.screenGeneration, replacement.screenGeneration)
+        pipeline.observe("")
+        assertNull(pipeline.request("empty", replaceCurrent = true))
+    }
     @Test fun testA_lateTranslationCannotReplaceNextSentence() {
         val pipeline = SubtitlePipeline("bottom-crop")
         pipeline.observe("A")

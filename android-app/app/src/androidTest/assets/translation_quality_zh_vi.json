@@ -1,0 +1,209 @@
+{
+  "kind": "SYNTHETIC_REVIEW_CORPUS_NOT_MEASURED",
+  "version": 1,
+  "provenance": "New fictional dialogue and reviewer guidance authored for this repository. References are suggested readings, not independent human-certified ground truth or measured model output.",
+  "source_language": "zh",
+  "target_language": "vi",
+  "cases": [
+    {
+      "id": "negation_positive",
+      "previous_zh": "你的请求我已经考虑清楚了。",
+      "previous_vi": "Tôi đã cân nhắc kỹ yêu cầu của anh rồi.",
+      "source_zh": "我今天一定会答应你的请求。",
+      "reference_vi": "Hôm nay tôi nhất định sẽ đồng ý với yêu cầu của anh.",
+      "critical_meaning": "The speaker will agree; preserve affirmative polarity and today.",
+      "reject_if": "The speaker refuses or the time is changed.",
+      "features": ["polarity", "time"]
+    },
+    {
+      "id": "negation_negative",
+      "previous_zh": "这件事太危险，你不要再求我了。",
+      "previous_vi": "Chuyện này quá nguy hiểm, anh đừng nài nỉ tôi nữa.",
+      "source_zh": "我今天一定不会答应你的请求。",
+      "reference_vi": "Hôm nay tôi nhất định sẽ không đồng ý với yêu cầu của anh.",
+      "critical_meaning": "The speaker will not agree; this must not reuse the affirmative case.",
+      "reject_if": "The negation is omitted or the speaker agrees.",
+      "features": ["polarity", "cache_contrast"]
+    },
+    {
+      "id": "double_negation_explanation",
+      "previous_zh": "你为什么一直不来帮我？",
+      "previous_vi": "Sao anh mãi không đến giúp tôi?",
+      "source_zh": "不是我不想帮你，是我真的走不开。",
+      "reference_vi": "Không phải tôi không muốn giúp anh, mà là tôi thực sự không thể rời đi.",
+      "critical_meaning": "Willingness to help remains; inability to leave is the reason.",
+      "reject_if": "The speaker does not want to help, or can freely leave.",
+      "features": ["polarity", "causality"]
+    },
+    {
+      "id": "numeric_simultaneous",
+      "previous_zh": "距离发车还有多久？",
+      "previous_vi": "Còn bao lâu nữa xe khởi hành?",
+      "source_zh": "还有2小时3分钟。",
+      "reference_vi": "Còn 2 giờ 3 phút.",
+      "critical_meaning": "Two hours and three minutes; units and values must not swap.",
+      "reject_if": "It becomes 3 hours 2 minutes, or either value/unit is missing.",
+      "features": ["numbers", "units"]
+    },
+    {
+      "id": "numeric_correction",
+      "previous_zh": "你刚才说要付三百块？",
+      "previous_vi": "Vừa rồi anh nói phải trả ba trăm tệ à?",
+      "source_zh": "不是300，是30，别多给了。",
+      "reference_vi": "Không phải 300 mà là 30, đừng đưa thừa.",
+      "critical_meaning": "Reject 300; correct amount is 30; do not overpay.",
+      "reject_if": "300 is accepted as the payment or either number is changed.",
+      "features": ["numbers", "polarity", "correction"]
+    },
+    {
+      "id": "chinese_numeral_contrast",
+      "previous_zh": "这批货物的价格又变了。",
+      "previous_vi": "Giá lô hàng này lại thay đổi rồi.",
+      "source_zh": "一共需要五千块钱才能买下。",
+      "reference_vi": "Phải có tổng cộng năm nghìn tệ mới mua được.",
+      "critical_meaning": "Five thousand, not three thousand; Chinese numerals carry meaning.",
+      "reject_if": "A similar cached three-thousand sentence replaces five thousand.",
+      "features": ["numbers", "cache_contrast"]
+    },
+    {
+      "id": "target_number_order",
+      "previous_zh": "我怎么才能得到奖励？",
+      "previous_vi": "Làm thế nào tôi mới nhận được phần thưởng?",
+      "source_zh": "等级2获得3金币。",
+      "reference_vi": "Nhận 3 đồng vàng ở cấp 2.",
+      "critical_meaning": "Level 2 gives 3 gold; Vietnamese may reorder values while roles stay fixed.",
+      "reject_if": "Level/gold values are swapped or a value is omitted.",
+      "features": ["numbers", "roles"]
+    },
+    {
+      "id": "repeated_number_ambiguity",
+      "previous_zh": "这些票该怎么分？",
+      "previous_vi": "Nên chia số vé này thế nào?",
+      "source_zh": "2人各拿3张票。",
+      "reference_vi": "Hai người, mỗi người lấy ba vé.",
+      "critical_meaning": "Two people, three tickets each; not three tickets in total.",
+      "reject_if": "The people count and ticket count are conflated or total replaces per-person quantity.",
+      "features": ["numbers", "quantifier"]
+    },
+    {
+      "id": "male_object",
+      "previous_zh": "王先生还不知道结果。",
+      "previous_vi": "Ông Vương vẫn chưa biết kết quả.",
+      "source_zh": "这件事情只需要告诉他。",
+      "reference_vi": "Chuyện này chỉ cần báo cho ông ấy.",
+      "critical_meaning": "Tell the male Mr. Wang; preserve only/need and the referent.",
+      "reject_if": "The object is changed to a woman, the listener, or everybody.",
+      "features": ["pronouns", "context"]
+    },
+    {
+      "id": "female_object",
+      "previous_zh": "李女士还不知道结果。",
+      "previous_vi": "Bà Lý vẫn chưa biết kết quả.",
+      "source_zh": "这件事情只需要告诉她。",
+      "reference_vi": "Chuyện này chỉ cần báo cho bà ấy.",
+      "critical_meaning": "Tell the female Ms. Li; must not reuse male-object translation.",
+      "reject_if": "The object is male or the referent is changed.",
+      "features": ["pronouns", "context", "cache_contrast"]
+    },
+    {
+      "id": "teacher_honorific",
+      "previous_zh": "老师，这条路我很熟悉。",
+      "previous_vi": "Thưa thầy, em rất quen đường này.",
+      "source_zh": "你先走吧。",
+      "reference_vi": "Thầy cứ đi trước đi.",
+      "critical_meaning": "A student addresses their teacher respectfully; allow a natural respectful equivalent.",
+      "reject_if": "It uses an intimate or insulting address, or reverses who goes first.",
+      "features": ["honorifics", "context", "same_source_different_context"]
+    },
+    {
+      "id": "friend_address",
+      "previous_zh": "老朋友，我们在前面的咖啡馆见。",
+      "previous_vi": "Bạn cũ à, chúng ta gặp nhau ở quán cà phê phía trước nhé.",
+      "source_zh": "你先走吧。",
+      "reference_vi": "Cậu cứ đi trước đi.",
+      "critical_meaning": "A friend addresses another friend; teacher context must not leak here.",
+      "reject_if": "The other speaker is called teacher because of the preceding scenario.",
+      "features": ["honorifics", "context", "same_source_different_context"]
+    },
+    {
+      "id": "father_ellipsis",
+      "previous_zh": "这封信是写给父亲的。",
+      "previous_vi": "Bức thư này được viết cho cha.",
+      "source_zh": "给他吧，别再藏着了。",
+      "reference_vi": "Đưa cho cha đi, đừng giấu nữa.",
+      "critical_meaning": "Give the letter to the previously identified father; stop hiding it.",
+      "reject_if": "The father is changed to a younger brother, or the letter should remain hidden.",
+      "features": ["ellipsis", "context", "polarity"]
+    },
+    {
+      "id": "idiom_critical_moment",
+      "previous_zh": "明明答应得好好的，结果你又迟到了。",
+      "previous_vi": "Rõ ràng đã hứa chắc rồi, vậy mà anh lại đến muộn.",
+      "source_zh": "关键时候掉链子。",
+      "reference_vi": "Cứ đến lúc quan trọng là lại làm hỏng việc.",
+      "critical_meaning": "An idiomatic complaint about failing at a critical moment.",
+      "reject_if": "A bicycle/physical chain is introduced without support from context.",
+      "features": ["idiom", "context"]
+    },
+    {
+      "id": "brother_praise",
+      "previous_zh": "大家都不肯帮忙，只有你赶来了。",
+      "previous_vi": "Ai cũng không chịu giúp, chỉ có cậu chạy đến.",
+      "source_zh": "还得是我兄弟。",
+      "reference_vi": "Đúng là anh em của tôi có khác.",
+      "critical_meaning": "Praise and trust for a brother/close friend who helped; no biological claim is required.",
+      "reject_if": "It becomes a complaint or literal obligation that the brother must do something unspecified.",
+      "features": ["idiom", "context"]
+    },
+    {
+      "id": "traditional_script",
+      "previous_zh": "前面有人設下了埋伏。",
+      "previous_vi": "Phía trước có người đặt mai phục.",
+      "source_zh": "別過去，現在還不能暴露身份。",
+      "reference_vi": "Đừng qua đó, bây giờ vẫn chưa thể để lộ thân phận.",
+      "critical_meaning": "Do not go there; identity cannot yet be revealed; traditional script must preserve negation.",
+      "reject_if": "The speaker tells someone to approach or reveal their identity now.",
+      "features": ["traditional", "polarity", "context"]
+    },
+    {
+      "id": "conditional_not_assertion",
+      "previous_zh": "我们还没有收到他的回信。",
+      "previous_vi": "Chúng ta vẫn chưa nhận được thư trả lời của anh ấy.",
+      "source_zh": "如果他明天不来，我们就自己走。",
+      "reference_vi": "Nếu ngày mai anh ấy không đến thì chúng ta tự đi.",
+      "critical_meaning": "A conditional plan, not proof the person will not come.",
+      "reject_if": "The absence is presented as certain, or the group waits instead of leaving on its own.",
+      "features": ["conditional", "polarity", "time"]
+    },
+    {
+      "id": "ability_vs_permission",
+      "previous_zh": "医生说他的腿还没有恢复。",
+      "previous_vi": "Bác sĩ nói chân anh ấy vẫn chưa hồi phục.",
+      "source_zh": "他现在还不能下床。",
+      "reference_vi": "Bây giờ anh ấy vẫn chưa thể xuống giường.",
+      "critical_meaning": "Recovery-related inability/restriction, not refusal to get up.",
+      "reject_if": "It says he simply does not want to leave bed, or already can.",
+      "features": ["modality", "polarity", "context"]
+    },
+    {
+      "id": "name_replacement",
+      "previous_zh": "王明已经走了，李明还在等消息。",
+      "previous_vi": "Vương Minh đã đi rồi, Lý Minh vẫn đang chờ tin.",
+      "source_zh": "把这份文件交给李明，不是王明。",
+      "reference_vi": "Đưa tài liệu này cho Lý Minh, không phải Vương Minh.",
+      "critical_meaning": "Recipient is Li Ming, expressly not Wang Ming.",
+      "reject_if": "The names or recipient/excluded-person roles are swapped.",
+      "features": ["names", "roles", "polarity"]
+    },
+    {
+      "id": "unfinished_clause",
+      "previous_zh": "你是不是已经知道真相了？",
+      "previous_vi": "Có phải anh đã biết sự thật rồi không?",
+      "source_zh": "我只是觉得，如果那天……",
+      "reference_vi": "Tôi chỉ nghĩ rằng, nếu hôm đó…",
+      "critical_meaning": "An unfinished conditional; do not invent its conclusion.",
+      "reject_if": "A specific outcome or new fact absent from the source is added.",
+      "features": ["ellipsis", "hallucination", "context"]
+    }
+  ]
+}

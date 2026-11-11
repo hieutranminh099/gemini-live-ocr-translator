@@ -2,6 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 import wave
+import threading
+import time
 
 import pytest
 
@@ -32,29 +34,50 @@ def video(tmp_path):
     return result
 
 
-async def test_chunked_audio_real_offset_mapping_bounded_and_cleanup(video, model, monkeypatch):
-    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
-    commands, progress = [], []
+def mock_tools(monkeypatch, rows=None, fail_decode=None):
+    commands, requests = [], []
     async def tool(command, **options):
         commands.append((list(command), options))
-        if '--worker' in command:
-            source = json.loads(Path(command[-2]).read_text(encoding='utf-8'))
-            assert source['language'] == 'zh' and source['model_dir'] == str(model)
-            Path(command[-1]).write_text(json.dumps(dict(segments=[
-                dict(start=.2, end=1.8, text='你好', confidence=.82)])), encoding='utf-8')
-        return b''
+        if '--worker' not in command:
+            if fail_decode is not None:
+                fail_decode(command)
+            return b''
+        input_path, output = Path(command[-2]), Path(command[-1])
+        sequence = 0
+        while True:
+            request_path = speech._session_path(input_path, sequence+1)
+            if request_path.exists():
+                request = json.loads(request_path.read_text(encoding='utf-8'))
+                sequence = request['sequence']
+                if request.get('stop'):
+                    return b''
+                requests.append(request)
+                result = rows(sequence) if callable(rows) else (rows or [])
+                target = speech._session_path(output,sequence)
+                temporary = target.with_suffix('.tmp')
+                temporary.write_text(json.dumps(dict(sequence=sequence, segments=result)), encoding='utf-8')
+                temporary.replace(target)
+            await asyncio.sleep(.001)
+    monkeypatch.setattr(speech, 'run_tool', tool)
+    return commands, requests
+
+
+async def test_chunked_audio_real_offset_mapping_bounded_and_cleanup(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    commands, requests = mock_tools(monkeypatch, [dict(start=.2, end=1.8, text='你好', confidence=.82)])
+    progress = []
     async def changed(ratio):
         progress.append(ratio)
-    monkeypatch.setattr(speech, 'run_tool', tool)
-    result = await speech.speech_video(video, metadata(), Toolchain(Path('ffmpeg.exe'), Path('ffprobe.exe')),
-        source='zh', model_dir=model, progress=changed)
-    assert [segment.start_ms for segment in result] == [200, 30200, 60200]
-    assert [segment.end_ms for segment in result] == [1800, 31800, 61000]
+    result = await asyncio.wait_for(speech.speech_video(video, metadata(), Toolchain(Path('ffmpeg.exe'), Path('ffprobe.exe')),
+        source='zh', model_dir=model, progress=changed), 5)
+    assert [segment.start_ms for segment in result] == [200, 29700, 59700]
+    assert [segment.end_ms for segment in result] == [1800, 31300, 61000]
     assert all(segment.source_type == 'SPEECH' and segment.language == 'zh' for segment in result)
-    assert len(commands) == 6 and len(progress) == 3 and progress[-1] == 1.
+    assert len(commands) == 4 and len(requests) == 3 and len(progress) == 3 and progress[-1] == 1.
+    assert all(request['language'] == 'zh' and request['model_dir'] == str(model) for request in requests)
     ffmpeg = [command for command, _ in commands if str(command[0]) == 'ffmpeg.exe']
     assert all(command[command.index('-map') + 1] == '0:2' for command in ffmpeg)
-    assert [command[command.index('-t') + 1] for command in ffmpeg] == ['30.000', '30.000', '1.000']
+    assert [command[command.index('-t') + 1] for command in ffmpeg] == ['30.500', '31.000', '1.500']
     assert not list(video.parent.glob('.video-speech-*'))
     assert video.read_bytes() == b'fake-video'
 
@@ -103,11 +126,7 @@ def test_invalid_asr_output_fails_instead_of_creating_bad_timestamps(rows):
 
 async def test_silence_empty_transcript_is_not_an_error(video, model, monkeypatch):
     monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
-    async def tool(command, **options):
-        if '--worker' in command:
-            Path(command[-1]).write_text('{"segments":[]}', encoding='utf-8')
-        return b''
-    monkeypatch.setattr(speech, 'run_tool', tool)
+    mock_tools(monkeypatch)
     result = await speech.speech_video(video, metadata(duration=1000), Toolchain(Path('ffmpeg'), Path('ffprobe')),
         source='ko', model_dir=model)
     assert result == []
@@ -117,16 +136,10 @@ async def test_wait_ready_gate_checked_before_any_heavy_work(video, model, monke
     monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
     entered = asyncio.Event()
     resume = asyncio.Event()
-    calls = []
+    calls, _ = mock_tools(monkeypatch)
     async def gate():
         entered.set()
         await resume.wait()
-    async def tool(command, **options):
-        calls.append(command)
-        if '--worker' in command:
-            Path(command[-1]).write_text('{"segments":[]}', encoding='utf-8')
-        return b''
-    monkeypatch.setattr(speech, 'run_tool', tool)
     task = asyncio.create_task(speech.speech_video(video, metadata(duration=1000),
         Toolchain(Path('ffmpeg'), Path('ffprobe')), source='ja', model_dir=model, wait_ready=gate))
     await entered.wait()
@@ -198,3 +211,170 @@ def test_worker_failure_diagnosis_excludes_private_content_and_paths(model, tmp_
     assert failure['error_type'] == 'ImportError'
     assert failure['missing_import'] == 'absent_dependency'
     assert 'private transcript' not in encoded and str(tmp_path) not in encoded
+
+
+async def test_checkpoint_resumes_after_last_finished_chunk_without_retaining_pcm(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    decode_count = 0
+    def fail_second(command):
+        nonlocal decode_count
+        decode_count += 1
+        if decode_count == 2:
+            raise VideoMediaError('synthetic_decode_failure', 'bounded test failure')
+    mock_tools(monkeypatch, [dict(start=.7, end=1.2, text='真实片段', confidence=.7)], fail_second)
+    with pytest.raises(VideoMediaError):
+        await speech.speech_video(video, metadata(), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+            source='zh', model_dir=model)
+    stored = json.loads((video.parent/'source.asr-checkpoint-v2.json').read_text(encoding='utf-8'))
+    assert stored['completed_ms'] == 30000 and len(stored['segments']) == 1
+    assert not list(video.parent.glob('.video-speech-*'))
+    commands, _ = mock_tools(monkeypatch, [dict(start=.7, end=1.2, text='真实片段', confidence=.7)])
+    observed = []
+    async def checkpoint(rows, pts):
+        observed.append((len(rows), pts))
+    result = await speech.speech_video(video, metadata(), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+        source='zh', model_dir=model, checkpoint=checkpoint)
+    decoded = [command for command, _ in commands if str(command[0]) == 'ffmpeg']
+    assert [command[command.index('-ss')+1] for command in decoded] == ['29.500', '59.500']
+    assert len(result) == 3 and observed == [(1,30000),(2,60000),(3,61000)]
+
+
+async def test_completed_project_cache_does_not_load_model_or_start_tools(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    mock_tools(monkeypatch, [dict(start=.1, end=.8, text='你好', confidence=.4)])
+    first = await speech.speech_video(video, metadata(1000), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+        source='zh', model_dir=model)
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: None)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('Completed source must reuse its private checkpoint')
+    monkeypatch.setattr(speech, 'run_tool', forbidden)
+    assert await speech.speech_video(video, metadata(1000), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+        source='zh', model_dir=model) == first
+
+
+@pytest.mark.parametrize('changed', ['source', 'model'])
+async def test_content_fingerprint_rejects_changed_source_or_model_before_process(video, model, monkeypatch, changed):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    mock_tools(monkeypatch)
+    await speech.speech_video(video, metadata(1000), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+        source='zh', model_dir=model)
+    target = video if changed == 'source' else model/'config.json'
+    original_stat = target.stat()
+    target.write_bytes(b'X' * original_stat.st_size)
+    import os
+    os.utime(target, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('Changed fingerprint must not dispatch work')
+    monkeypatch.setattr(speech, 'run_tool', forbidden)
+    with pytest.raises(VideoMediaError) as error:
+        await speech.speech_video(video, metadata(1000), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+            source='zh', model_dir=model)
+    assert error.value.code == 'speech_checkpoint_changed'
+
+
+async def test_overlap_removes_same_occurrence_but_keeps_repeated_text_later(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    chunks = {1:[dict(start=29.6,end=30.2,text='你好')],
+        2:[dict(start=.1,end=.7,text='你好'),dict(start=1.,end=1.5,text='你好')],
+        3:[dict(start=.8,end=1.2,text='你好')]}
+    mock_tools(monkeypatch, lambda sequence: chunks[sequence])
+    result = await speech.speech_video(video, metadata(), Toolchain(Path('ffmpeg'), Path('ffprobe')),
+        source='zh', model_dir=model)
+    assert [(item.start_ms,item.end_ms) for item in result] == [(29600,30200),(30500,31000),(60300,60700)]
+
+
+def test_session_worker_reuses_one_model_for_two_requests_and_stops(model, tmp_path, monkeypatch):
+    audio = tmp_path/'chunk.wav'
+    wav_file(audio)
+    source, output = tmp_path/'input.json', tmp_path/'output.json'
+    source.write_text('{"session":true}',encoding='utf-8')
+    source.with_suffix('.heartbeat').touch()
+    loads, calls, exit_codes = [], [], []
+    retained_model = object()
+    def load_model(directory):
+        loads.append(directory)
+        return retained_model
+    def recognize(audio_path, directory, language, *, model):
+        assert model is retained_model
+        calls.append(language)
+        return [dict(start=.1,end=.8,text='你好')]
+    monkeypatch.setattr(speech, '_load_model', load_model)
+    monkeypatch.setattr(speech, '_recognize', recognize)
+    def request(sequence, **kwargs):
+        target = speech._session_path(source,sequence)
+        temporary = target.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(session=True,sequence=sequence,
+            audio_path=str(audio),model_dir=str(model),language='zh',**kwargs)),encoding='utf-8')
+        temporary.replace(target)
+    def await_result(sequence):
+        deadline = time.monotonic()+3
+        target = speech._session_path(output,sequence)
+        while time.monotonic()<deadline:
+            if target.exists() and json.loads(target.read_text(encoding='utf-8')).get('sequence')==sequence:
+                return
+            time.sleep(.01)
+        raise AssertionError('Bounded worker request timed out')
+    request(1)
+    worker = threading.Thread(target=lambda:exit_codes.append(speech.speech_worker_main([str(source),str(output)])))
+    worker.start()
+    try:
+        await_result(1)
+        request(2)
+        await_result(2)
+    finally:
+        request(3,stop=True)
+        worker.join(3)
+    assert not worker.is_alive() and exit_codes == [0]
+    assert loads == [model] and calls == ['zh','zh']
+
+
+def test_recognizer_filters_high_no_speech_low_probability_hallucination(model, tmp_path):
+    from types import SimpleNamespace
+    audio = tmp_path/'chunk.wav'
+    wav_file(audio)
+    class RecognitionModel:
+        def transcribe(self, samples, **options):
+            assert len(samples)==16000 and options['vad_filter'] and not options['condition_on_previous_text']
+            return [SimpleNamespace(start=0,end=.4,text='music hallucination',avg_logprob=-1.,no_speech_prob=.98),
+                    SimpleNamespace(start=.4,end=.9,text='你好',avg_logprob=-.2,no_speech_prob=.05)], None
+    result = speech._recognize(audio,model,'zh',model=RecognitionModel())
+    assert len(result)==1 and result[0]['text']=='你好' and .8<result[0]['confidence']<.9
+
+
+async def test_cancel_while_asr_is_busy_stops_owned_worker_and_removes_pcm(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    entered, stopped = asyncio.Event(), asyncio.Event()
+    async def tool(command, **options):
+        if '--worker' in command:
+            entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                stopped.set()
+        return b''
+    monkeypatch.setattr(speech,'run_tool',tool)
+    task = asyncio.create_task(speech.speech_video(video,metadata(1000),Toolchain(Path('ffmpeg'),Path('ffprobe')),
+        source='zh',model_dir=model))
+    await asyncio.wait_for(entered.wait(),2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task,3)
+    assert stopped.is_set() and not list(video.parent.glob('.video-speech-*'))
+    assert not (video.parent/'source.asr-checkpoint-v2.json').exists()
+
+
+async def test_corrupt_checkpoint_does_not_publish_an_invalid_timeline(video, model, monkeypatch):
+    monkeypatch.setattr(speech.importlib.util, 'find_spec', lambda name: object())
+    mock_tools(monkeypatch,[dict(start=.1,end=.8,text='你好',confidence=.8)])
+    await speech.speech_video(video,metadata(1000),Toolchain(Path('ffmpeg'),Path('ffprobe')),source='zh',model_dir=model)
+    target = video.parent/'source.asr-checkpoint-v2.json'
+    state = json.loads(target.read_text(encoding='utf-8'))
+    state['segments'][0]['end_ms'] = -1
+    target.write_text(json.dumps(state),encoding='utf-8')
+    async def forbidden(*args,**kwargs):
+        raise AssertionError('Invalid persisted timestamps must stop before recognition')
+    monkeypatch.setattr(speech,'run_tool',forbidden)
+    with pytest.raises(VideoMediaError) as error:
+        await speech.speech_video(video,metadata(1000),Toolchain(Path('ffmpeg'),Path('ffprobe')),source='zh',model_dir=model)
+    assert error.value.code=='invalid_speech_checkpoint'
+    assert json.loads(target.read_text(encoding='utf-8'))['segments'][0]['end_ms']==-1

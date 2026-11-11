@@ -48,9 +48,9 @@ class SubtitlePipeline(initialRegionId: String = "") {
     }
 
     /** Repeated OCR of an unchanged sentence can issue at most one successful request. */
-    fun request(requestId: String): RequestToken? {
+    fun request(requestId: String, replaceCurrent: Boolean = false): RequestToken? {
         require(requestId.isNotBlank())
-        if (signature.isEmpty() || submittedGeneration == screenGeneration) return null
+        if (signature.isEmpty() || (submittedGeneration == screenGeneration && !replaceCurrent)) return null
         return RequestToken(requestId, regionId, screenGeneration, signature).also {
             submittedGeneration = screenGeneration
             currentRequest = it

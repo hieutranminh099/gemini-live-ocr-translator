@@ -125,6 +125,163 @@ async def test_speech_job_restores_typed_metadata_without_computed_ui_fields(vid
     assert result['progress']['ai_calls']==1
 
 
+async def ocr_job(env, monkeypatch, visible, *, complete=True, error=None, keep_track=False):
+    from app import video_ocr
+    calls = []
+    async def scan(path, tools, **kwargs):
+        calls.append(kwargs.get('start_ms'))
+        if error is not None:
+            raise error
+        await kwargs['progress'](0.)
+        if visible:
+            await kwargs['checkpoint']([item.as_dict() for item in visible], max(item.end_ms for item in visible))
+        await kwargs['progress'](.999 if complete else .1)
+        await kwargs['progress'](1.)
+        return visible
+    monkeypatch.setattr(video_ocr, 'ocr_video', scan)
+    env.service.recognizer_factory = lambda language: object()
+    project, _ = await upload(env.service)
+    if not keep_track:
+        env.service.jobs[project['id']]['metadata']['streams'] = env.service.jobs[project['id']]['metadata']['streams'][:2]
+    return project, calls
+
+
+async def test_auto_full_empty_ocr_uses_audio_and_marks_uncertain_draft(video_env, monkeypatch):
+    env = video_env
+    project, scans = await ocr_job(env,monkeypatch,[])
+    recognized = []
+    spoken = [VideoSegment('asr-1',1000,2000,'音频中的话',language='zh',confidence=.4,source_type='SPEECH')]
+    async def asr(path,meta,tools,**kwargs):
+        recognized.append(path)
+        await kwargs['checkpoint'](spoken,30000)
+        return spoken
+    env.service.speech_processor = asr
+    await env.service.start(project['id'])
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and scans==[0] and len(recognized)==1
+    assert result['extraction_method']=='speech' and result['source_coverage']['ocr_cues']==0
+    row = result['segments'][0]
+    assert row['review_required'] and row['quality']=='draft' and row['source_type']=='SPEECH'
+    assert (row['start_ms'],row['end_ms'])==(1000,2000)
+
+
+async def test_sparse_ocr_is_preserved_and_audio_only_fills_nonoverlapping_gaps(video_env, monkeypatch):
+    env = video_env
+    visible = [VideoSegment('visible',5000,6000,'画面字幕',language='zh',confidence=.95,source_type='OCR')]
+    project, _ = await ocr_job(env,monkeypatch,visible)
+    spoken = [VideoSegment('asr-1',1000,2000,'重复的话',language='zh',confidence=.8,source_type='SPEECH'),
+        VideoSegment('asr-overlap',5000,6100,'画面字幕',language='zh',confidence=.8,source_type='SPEECH'),
+        VideoSegment('asr-2',7000,8000,'重复的话',language='zh',confidence=.8,source_type='SPEECH')]
+    async def asr(path,meta,tools,**kwargs):
+        await kwargs['checkpoint'](spoken,meta.duration_ms)
+        return spoken
+    env.service.speech_processor = asr
+    await env.service.start(project['id'])
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and result['extraction_method']=='ocr+speech'
+    assert [(row['text'],row['start_ms'],row['end_ms'],row['source_type']) for row in result['segments']] == [
+        ('重复的话',1000,2000,'SPEECH'),('画面字幕',5000,6000,'OCR'),('重复的话',7000,8000,'SPEECH')]
+    assert 'ROI' in result['source_warning']
+
+
+async def test_ocr_errors_and_incomplete_scan_do_not_trigger_asr(video_env, monkeypatch):
+    env = video_env
+    called = []
+    async def asr(*args,**kwargs):
+        called.append(True)
+        raise AssertionError('Decode/ROI problems must remain diagnosable')
+    project, _ = await ocr_job(env,monkeypatch,[],error=VideoMediaError('decode_failed','Synthetic codec failure'))
+    env.service.speech_processor = asr
+    await env.service.start(project['id'])
+    result = await finished(env.service,project['id'])
+    assert result['status']=='failed' and result['error_code']=='decode_failed' and not called
+    second, _ = await ocr_job(env,monkeypatch,[],complete=False)
+    await env.service.start(second['id'])
+    result = await finished(env.service,second['id'])
+    assert result['status']=='failed' and result['error_code']=='ocr_scan_incomplete' and not called
+
+
+async def test_sparse_valid_ocr_without_model_is_kept_with_actionable_warning(video_env, monkeypatch):
+    from app import video_speech
+    env = video_env
+    visible = [VideoSegment('visible',5000,6000,'只有一句',language='zh',confidence=.9,source_type='OCR')]
+    project, _ = await ocr_job(env,monkeypatch,visible)
+    monkeypatch.setattr(video_speech,'speech_capability',lambda model:dict(available=False))
+    await env.service.start(project['id'])
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and result['extraction_method']=='ocr'
+    assert result['segments'][0]['text']=='只有一句' and 'ASR' in result['source_warning']
+
+
+async def test_manual_ocr_never_silently_changes_to_audio(video_env, monkeypatch):
+    env = video_env
+    project, _ = await ocr_job(env,monkeypatch,[])
+    async def forbidden(*args,**kwargs):
+        raise AssertionError('Manual OCR must not invoke audio')
+    env.service.speech_processor = forbidden
+    await env.service.start(project['id'],dict(method='ocr'))
+    result = await finished(env.service,project['id'])
+    assert result['status']=='failed' and result['error_code']=='no_segments'
+    assert result['extraction_method']=='ocr'
+
+
+async def test_empty_embedded_track_in_auto_continues_to_complete_ocr(video_env, monkeypatch):
+    env = video_env
+    env.rows = []
+    visible = [VideoSegment('visible',0,115000,'画面中的字幕',language='zh',confidence=.9,source_type='OCR')]
+    project, scans = await ocr_job(env,monkeypatch,visible,keep_track=True)
+    await env.service.start(project['id'])
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and len(env.extracted)==1 and scans==[0]
+    assert result['extraction_method']=='ocr' and result['segments'][0]['source_type']=='OCR'
+
+
+async def test_speech_phase_recovers_after_restart_without_rescanning_or_overwriting_approved(video_env, monkeypatch):
+    env = video_env
+    visible = [VideoSegment('visible',5000,6000,'保留字幕',language='zh',confidence=.9,source_type='OCR')]
+    project, scans = await ocr_job(env,monkeypatch,visible)
+    spoken = [VideoSegment('asr-1',1000,2000,'听到的话',language='zh',confidence=.4,source_type='SPEECH')]
+    calls = []
+    async def asr(path,meta,tools,**kwargs):
+        calls.append(path)
+        await kwargs['checkpoint'](spoken,30000)
+        if len(calls)==1:
+            raise VideoMediaError('speech_failed','Synthetic interrupted recognition')
+        return spoken
+    env.service.speech_processor = asr
+    await env.service.start(project['id'])
+    partial = await finished(env.service,project['id'])
+    assert partial['status']=='failed' and partial['speech_progress_ms']==30000
+    await env.service.edit(project['id'],[dict(id='asr-1',translation='Bản duyệt giữ nguyên.',quality='user_approved')])
+    await env.service.close()
+    env.service = VideoJobService(env.service.directory,env.manager,tools=env.tools,
+        recognizer_factory=lambda language:object(),speech_processor=asr)
+    await env.service.action(project['id'],'recover')
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and scans==[0] and len(calls)==2
+    row = next(row for row in result['segments'] if row['id']=='asr-1')
+    assert row['translation']=='Bản duyệt giữ nguyên.' and row['quality']=='user_approved' and row['review_required']
+    assert env.api.calls[0][0]==['保留字幕']
+
+
+async def test_completed_asr_source_is_not_recognized_again_after_translation_error(video_env):
+    env = video_env
+    calls = []
+    async def asr(path,meta,tools,**kwargs):
+        calls.append(path)
+        return [VideoSegment('asr-1',1000,2000,'保存的声音',language='zh',source_type='SPEECH')]
+    env.service.speech_processor = asr
+    env.api.fail_on_call = 1
+    project, _ = await upload(env.service)
+    await env.service.start(project['id'],dict(method='speech'))
+    first = await finished(env.service,project['id'])
+    assert first['status']=='failed' and first['extraction_complete']
+    env.api.fail_on_call = None
+    await env.service.action(project['id'],'recover')
+    result = await finished(env.service,project['id'])
+    assert result['status']=='ready' and len(calls)==1
+
+
 def frame(text, **kwargs):
     return TranslateRequest.model_validate(dict(request_id='live-test', source='zh', profile='game', mode='fast',
         blocks=[dict(id='source', text=text, box=dict(x=0, y=0, width=1, height=1))], **kwargs))

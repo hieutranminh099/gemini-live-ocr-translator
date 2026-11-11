@@ -1,0 +1,102 @@
+{
+  "kind": "PUBLIC_VIDEO_OBSERVED_INPUT_PAIRS_NOT_CURRENT_TARGET_ANSWERS",
+  "origin_report": "youtube-modern-2026-10-26-v20-mt60.json",
+  "cases": [
+    {
+      "case_id": "v20_attempt_1",
+      "source_zh": "帮帮我",
+      "previous_zh": null,
+      "previous_vi": null
+    },
+    {
+      "case_id": "v20_attempt_2",
+      "source_zh": "快快快进来进来",
+      "previous_zh": "帮帮我",
+      "previous_vi": "Giúp ta giúp ta"
+    },
+    {
+      "case_id": "v20_attempt_3",
+      "source_zh": "快",
+      "previous_zh": "快快快进来进来",
+      "previous_vi": "! Nhanh nhanh nhanh tiến vào"
+    },
+    {
+      "case_id": "v20_attempt_4",
+      "source_zh": "清 儿",
+      "previous_zh": "快",
+      "previous_vi": "."
+    },
+    {
+      "case_id": "v20_attempt_5",
+      "source_zh": "军哥军哥",
+      "previous_zh": "清 儿",
+      "previous_vi": "Nhanh Thanh Nhi"
+    },
+    {
+      "case_id": "v20_attempt_6",
+      "source_zh": "电盟",
+      "previous_zh": "军哥军哥",
+      "previous_vi": "Quân ca Quân ca"
+    },
+    {
+      "case_id": "v20_attempt_7",
+      "source_zh": "拜托",
+      "previous_zh": "电盟",
+      "previous_vi": "Điện Minh"
+    },
+    {
+      "case_id": "v20_attempt_8",
+      "source_zh": "扶住他",
+      "previous_zh": "拜托",
+      "previous_vi": "nhờ cậy"
+    },
+    {
+      "case_id": "v20_attempt_9",
+      "source_zh": "愿主保佑你",
+      "previous_zh": "扶住他",
+      "previous_vi": "hắn đỡ lấy"
+    },
+    {
+      "case_id": "v20_attempt_10",
+      "source_zh": "我的孩子",
+      "previous_zh": "愿主保佑你",
+      "previous_vi": "hắn, Nguyện Chủ phù hộ ngươi"
+    },
+    {
+      "case_id": "v20_attempt_11",
+      "source_zh": "儿",
+      "previous_zh": "我的孩子",
+      "previous_vi": "."
+    },
+    {
+      "case_id": "v20_attempt_12",
+      "source_zh": "儿",
+      "previous_zh": "儿",
+      "previous_vi": "Con của ta."
+    },
+    {
+      "case_id": "v20_attempt_13",
+      "source_zh": "川",
+      "previous_zh": "儿",
+      "previous_vi": "Con của ta."
+    },
+    {
+      "case_id": "v20_attempt_14",
+      "source_zh": "季",
+      "previous_zh": "儿",
+      "previous_vi": "Con của ta."
+    },
+    {
+      "case_id": "v20_attempt_15",
+      "source_zh": "川",
+      "previous_zh": "儿",
+      "previous_vi": "Con của ta."
+    },
+    {
+      "case_id": "v20_attempt_16",
+      "source_zh": "儿",
+      "previous_zh": "儿",
+      "previous_vi": "Con của ta."
+    }
+  ]
+}

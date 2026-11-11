@@ -116,15 +116,15 @@ class ConfigurationFailureCaptureTest {
         assertNotNull(retries.waiting(key(sourceA), SystemClock.elapsedRealtime()))
     }
 
-    @Test fun ramCachedSentenceRendersEvenWhileConfigurationFailureIsLatched() {
+    @Test fun unscopedPhoneCacheDoesNotBypassServerContextDuringConfigurationFailure() {
         message(error(pending()))
         set("memoryAllowed", true)
         (value("memory") as TranslationMemory).put("zh|game|fast|${SubtitleText.identity(sourceB)}", "Hôm nay nghỉ.")
         observe(sourceB)
         invoke("sendLatest")
-        assertEquals(1L, value("sequence"))
-        assertEquals("Hôm nay nghỉ.", SessionState.lastTranslation.value)
-        assertTrue(SessionState.status.value.contains("Dùng cache trên điện thoại"))
+        assertEquals(2L, value("sequence"))
+        assertEquals("", SessionState.lastTranslation.value)
+        assertTrue(SessionState.status.value.contains("Không gửi được sang Windows"))
         assertNotNull(retries.waiting(key(sourceA), SystemClock.elapsedRealtime()))
     }
 
@@ -244,7 +244,7 @@ class ConfigurationFailureCaptureTest {
         assertTrue(SessionState.status.value.startsWith("Quota reset"))
     }
 
-    @Test fun ramCacheStillRendersDuringProviderCooldown() {
+    @Test fun unscopedPhoneCacheDoesNotBypassProviderCooldown() {
         message(error(pending()).put("code", "rate_limited").put("message", "Quota reset")
             .put("retry_after_ms", 25000))
         set("memoryAllowed", true)
@@ -252,8 +252,8 @@ class ConfigurationFailureCaptureTest {
         observe(sourceB)
         invoke("sendLatest")
         assertEquals(1L, value("sequence"))
-        assertEquals("Hôm nay nghỉ.", SessionState.lastTranslation.value)
-        assertTrue(SessionState.status.value.contains("Dùng cache trên điện thoại"))
+        assertEquals("", SessionState.lastTranslation.value)
+        assertTrue(SessionState.status.value.startsWith("Quota reset"))
         assertNotNull(retries.waiting(key(sourceB), SystemClock.elapsedRealtime()))
     }
 }

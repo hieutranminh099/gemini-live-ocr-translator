@@ -14,6 +14,47 @@ import org.robolectric.util.ReflectionHelpers
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class TranslationOverlayTest {
+    @Test fun quotaWaitIsShownAsWaitingAndRemainsCancellable() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val settings = AppSettings(context).apply { useSubtitlePreset() }
+        var cancelled = 0
+        val overlay = TranslationOverlay(context, settings, {}, {}, {}, {}, { cancelled++ })
+        try {
+            overlay.busy(true)
+            overlay.progress(2, "你好", quotaWaitSeconds = 30)
+            val label = ReflectionHelpers.getField<TextView>(overlay, "statusLabel")
+            assertTrue(label.text.contains("Đang chờ lượt Gemini"))
+            assertTrue(label.text.contains("30s"))
+            val button = ReflectionHelpers.getField<TextView>(overlay, "frameButton")
+            button.performClick()
+            assertEquals(1, cancelled)
+        } finally { overlay.close() }
+    }
+    @Test fun manualSamplingHidesTheWholeWindowSurfaceAndRestoresItsOpacity() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val settings = AppSettings(context).apply { useSubtitlePreset() }
+        val overlay = TranslationOverlay(context, settings, {}, {})
+        try {
+            val params = ReflectionHelpers.getField<android.view.WindowManager.LayoutParams>(overlay, "layerParams")
+            val opacity = params.alpha
+            assertTrue(opacity > 0f)
+            val blocks = org.json.JSONArray().put(org.json.JSONObject().put("text", "Bản dịch thử")
+                .put("box", org.json.JSONObject().put("x", .1).put("y", .7).put("width", .8).put("height", .1)))
+            overlay.show(blocks)
+            overlay.sampling(true)
+            assertEquals(0f, params.alpha, 0f)
+            assertFalse(ReflectionHelpers.getField<Boolean>(overlay, "rendererAttached"))
+            overlay.sampling(false)
+            assertEquals(opacity, params.alpha, 0f)
+            assertTrue(ReflectionHelpers.getField<Boolean>(overlay, "rendererAttached"))
+            overlay.clear()
+            overlay.sampling(true); overlay.sampling(false)
+            assertEquals("An empty surface must stay hidden after capture", 0f, params.alpha, 0f)
+            assertFalse(ReflectionHelpers.getField<Boolean>(overlay, "rendererAttached"))
+            overlay.show(blocks)
+            assertEquals(opacity, params.alpha, 0f)
+        } finally { overlay.close() }
+    }
     @Test fun waitingFrameCanBeCancelledAndRetriedInsteadOfBecomingDisabled() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val settings = AppSettings(context).apply { useSubtitlePreset() }

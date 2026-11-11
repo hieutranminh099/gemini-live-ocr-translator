@@ -1,4 +1,6 @@
 .tools/
+android-app/app/libs/sherpa-onnx-static-link-onnxruntime-2.0.1.aar
+android-app/app/libs/sherpa-onnx-static-link-onnxruntime-2.0.1-app.aar
 .python-deps/
 .gradle-home/
 .pytest_cache/
@@ -43,3 +45,6 @@ tests/.runtime-verified/
 tests/.runtime-packaged/
 **/.runtime*/
 
+
+# Codex settings for this machine are not shared source.
+.codex/

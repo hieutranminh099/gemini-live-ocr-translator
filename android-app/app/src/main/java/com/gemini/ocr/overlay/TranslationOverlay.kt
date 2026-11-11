@@ -9,20 +9,42 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.TextView
 import android.widget.LinearLayout
-import com.gemini.ocr.settings.AppSettings
+import android.widget.TextView
 import com.gemini.ocr.SessionState
 import com.gemini.ocr.capture.SubtitleRegion
+import com.gemini.ocr.settings.AppSettings
 import org.json.JSONArray
 
-class TranslationOverlay(private val context: Context, private val settings: AppSettings,
-    private val onToggle: () -> Unit, private val onStop: () -> Unit,
-    private val onCapture: () -> Unit = {}, private val onRegion: () -> Unit = {},
-    private val onCancel: () -> Unit = {}) {
+class TranslationOverlay(
+    private val context: Context,
+    private val settings: AppSettings,
+    private val onToggle: () -> Unit,
+    private val onStop: () -> Unit,
+    private val onCapture: () -> Unit = {},
+    private val onRegion: () -> Unit = {},
+    private val onCancel: () -> Unit = {}
+) {
+    companion object {
+        const val SUBTITLE_PASSTHROUGH_FLAGS: Int =
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+    }
+
     private val wm = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
-    private val renderer = RenderView(context).apply { visibility = View.INVISIBLE }
+    private val passthroughAlpha: Float = if (Build.VERSION.SDK_INT >= 31) {
+        (context.getSystemService(InputManager::class.java)?.maximumObscuringOpacityForTouch ?: 0.8f) * 0.95f
+    } else {
+        0.85f
+    }
+
+    // Requirement 5: Subtitle display view must have Color.TRANSPARENT window background
+    private val renderer = RenderView(context).apply {
+        setBackgroundColor(Color.TRANSPARENT)
+        visibility = View.INVISIBLE
+    }
     private var renderKey = ""
     private var feedbackKey: Pair<String, Boolean>? = null
     private var placementBlocked = false
@@ -37,23 +59,35 @@ class TranslationOverlay(private val context: Context, private val settings: App
         }
         contentDescription = "Chạm để tạm dừng hoặc tiếp tục; giữ để dừng; kéo để di chuyển"
     }
+
     private fun action(label: String, description: String, callback: () -> Unit) = TextView(context).apply {
         text = label; textSize = 11f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
         typeface = Typeface.DEFAULT_BOLD; contentDescription = description
-        background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 12 * density; setColor(Color.rgb(25, 48, 58)) }
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 12 * density
+            setColor(Color.rgb(25, 48, 58))
+        }
         setOnClickListener { callback() }
     }
+
     private var working = false
     private val idleAction: String get() = if (settings.subtitleCapture == "auto") "QUÉT LẠI" else "1 KHUNG"
-    private val idleDescription: String get() = if (settings.subtitleCapture == "auto")
-        "Quét lại vùng phụ đề và tiếp tục dịch tự động" else "Dịch 1 khung phụ đề"
+    private val idleDescription: String
+        get() = if (settings.subtitleCapture == "auto") {
+            "Quét lại vùng phụ đề và tiếp tục dịch tự động"
+        } else {
+            "Dịch 1 khung phụ đề"
+        }
     private val frameButton = action(idleAction, idleDescription) { if (working) onCancel() else onCapture() }
     private val regionButton = action("VÙNG", "Chọn vùng phụ đề", onRegion)
     private val statusLabel = TextView(context).apply {
         textSize = 11f; setTextColor(Color.rgb(190, 242, 227)); maxLines = 3
         ellipsize = android.text.TextUtils.TruncateAt.END
         setPadding((8 * density).toInt(), (5 * density).toInt(), (8 * density).toInt(), (5 * density).toInt())
-        background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 8 * density; setColor(Color.rgb(18, 34, 43)) }
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 8 * density
+            setColor(Color.rgb(18, 34, 43))
+        }
     }
     private val buttonRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -70,19 +104,47 @@ class TranslationOverlay(private val context: Context, private val settings: App
             addView(statusLabel, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (5 * density).toInt() })
         }
     }
-    private val layerParams = WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
-                gravity = Gravity.TOP or Gravity.START
-                // Android 12+ passes touches through untrusted overlays only below the obscuring threshold.
-                alpha = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(InputManager::class.java).maximumObscuringOpacityForTouch * .95f else .75f
-            }
-    private val bubbleParams = WindowManager.LayoutParams(((if (settings.subtitleFocus) 256 else 48) * density).toInt(), WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
+
+    // Requirement 5: Subtitle display window MUST always carry FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE
+    private val layerParams = WindowManager.LayoutParams(
+        -1,
+        -1,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        SUBTITLE_PASSTHROUGH_FLAGS,
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        alpha = passthroughAlpha
+    }
+
+    // Only the compact toolbar receives touch events
+    private val bubbleParams = WindowManager.LayoutParams(
+        ((if (settings.subtitleFocus) 256 else 48) * density).toInt(),
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+    ).apply {
         gravity = Gravity.TOP or Gravity.START
         x = (12 * density).toInt(); y = (100 * density).toInt()
     }
+
+    private var rendererAttached = true
+
+    private fun attachRendererSurface() {
+        if (rendererAttached) wm.updateViewLayout(renderer, layerParams)
+        else {
+            wm.addView(renderer, layerParams)
+            rendererAttached = true
+        }
+    }
+
+    private fun detachRendererSurface() {
+        if (!rendererAttached) return
+        wm.removeViewImmediate(renderer)
+        rendererAttached = false
+    }
+
     init {
         wm.addView(renderer, layerParams)
         wm.addView(controls, bubbleParams)
@@ -91,7 +153,13 @@ class TranslationOverlay(private val context: Context, private val settings: App
         }
         bubble.setOnClickListener { onToggle() }
         bubble.setOnLongClickListener { onStop(); true }
-        feedback(if (settings.subtitleCapture == "auto") "${languageName()} → Việt • Tự động tăng tốc\nĐổi câu sẽ tự dịch • VÙNG để khoanh chữ." else "${languageName()} → Việt • Chạm 1 KHUNG\nDừng video ở câu cần dịch.")
+        feedback(
+            if (settings.subtitleCapture == "auto") {
+                "${languageName()} → Việt • Tự động\nĐổi câu sẽ tự dịch • VÙNG để khoanh chữ."
+            } else {
+                "${languageName()} → Việt • Chạm 1 KHUNG\nDừng video ở câu cần dịch."
+            }
+        )
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var started = 0L
         bubble.setOnTouchListener { _, event ->
             when (event.action) {
@@ -113,15 +181,20 @@ class TranslationOverlay(private val context: Context, private val settings: App
             true
         }
     }
+
     private var capturing = false
+
     fun show(blocks: JSONArray, onDrawn: (() -> Unit)? = null) {
-        if (blocks.length() == 0) { clear(); return }
+        if (blocks.length() == 0) {
+            clear()
+            return
+        }
         val key = if (settings.adjacentSubtitles) {
-            // Native OCR boxes can move by a pixel between frames. A stationary band
-            // depends on the selected ROI and text, not that box jitter.
             (0 until blocks.length()).joinToString("\n") { blocks.getJSONObject(it).getString("text") } +
-                "|${screenBounds()}|${settings.subtitleRegion}|${settings.fontSize}|${settings.textColor}"
-        } else blocks.toString()
+                "|${screenBounds()}|${settings.subtitleRegion}|${settings.fontSize}|${settings.textColor}|${settings.opacity}|${settings.subtitleY}|${settings.subtitleBackground}|${settings.subtitleOutline}"
+        } else {
+            blocks.toString()
+        }
         if (key == renderKey) return
         renderer.blocks = blocks
         renderer.onDrawn = onDrawn
@@ -133,29 +206,52 @@ class TranslationOverlay(private val context: Context, private val settings: App
         }
         placementBlocked = false
         renderKey = key
+        layerParams.alpha = if (capturing) 0f else passthroughAlpha
+        if (!capturing) attachRendererSurface()
         renderer.visibility = if (capturing) View.INVISIBLE else View.VISIBLE
-        renderer.invalidate(); SessionState.overlayVisible.value = !capturing
+        renderer.invalidate()
+        SessionState.overlayVisible.value = !capturing
     }
+
     fun clear() {
         placementBlocked = false
+        if (layerParams.alpha != 0f) {
+            layerParams.alpha = 0f
+            if (rendererAttached) wm.updateViewLayout(renderer, layerParams)
+        }
+        if (!settings.adjacentSubtitles) detachRendererSurface()
         if (renderer.blocks.length() == 0 && renderer.visibility == View.INVISIBLE) return
-        renderKey = ""; renderer.blocks = JSONArray(); renderer.onDrawn = null; renderer.visibility = View.INVISIBLE
-        renderer.invalidate(); SessionState.overlayVisible.value = false
+        renderKey = ""
+        renderer.blocks = JSONArray()
+        renderer.onDrawn = null
+        renderer.visibility = View.INVISIBLE
+        renderer.invalidate()
+        SessionState.overlayVisible.value = false
     }
+
     fun paused(value: Boolean) {
         bubble.text = if (value) "▶" else "Ⅱ"
         if (value) feedback("Đã tạm dừng • Chạm ▶ hoặc $idleAction để tiếp tục")
     }
+
     fun busy(value: Boolean) {
-        working = value; frameButton.isEnabled = true
+        working = value
+        frameButton.isEnabled = true
         frameButton.text = if (value) "HỦY AI" else idleAction
         frameButton.contentDescription = if (value) "Hủy yêu cầu dịch đang chờ" else idleDescription
     }
-    fun progress(seconds: Long, original: String) {
+
+    fun progress(seconds: Long, original: String, quotaWaitSeconds: Long = 0L) {
         if (!working) return
+        if (quotaWaitSeconds > 0) {
+            frameButton.text = "${quotaWaitSeconds}s · HỦY"
+            feedback("Đang chờ lượt Gemini • ${quotaWaitSeconds}s\nOCR: ${original.take(72)}\nChạm HỦY để dừng chờ.")
+            return
+        }
         frameButton.text = "${seconds}s · HỦY"
         feedback("${languageName()} → Việt • Đang dịch ${seconds}s\nOCR: ${original.take(72)}\nChạm HỦY để dừng chờ.")
     }
+
     fun feedback(message: String, error: Boolean = false) {
         if (placementBlocked && !error) return
         if (feedbackKey == Pair(message, error)) return
@@ -163,34 +259,63 @@ class TranslationOverlay(private val context: Context, private val settings: App
         statusLabel.text = message
         statusLabel.setTextColor(if (error) Color.rgb(255, 209, 128) else Color.rgb(190, 242, 227))
     }
-    private fun languageName() = mapOf("en" to "Anh", "zh" to "Trung", "ja" to "Nhật", "ko" to "Hàn")[settings.language] ?: settings.language
-    fun editing(value: Boolean) { controls.visibility = if (value) View.INVISIBLE else View.VISIBLE }
+
+    private fun languageName() = "Trung"
+
+    fun editing(value: Boolean) {
+        controls.visibility = if (value) View.INVISIBLE else View.VISIBLE
+    }
+
     fun sampling(value: Boolean) {
-        if (settings.adjacentSubtitles) return // No periodic alpha/visibility changes in automatic mode.
+        if (settings.adjacentSubtitles) return
         capturing = value
         renderer.visibility = if (value || renderer.blocks.length() == 0) View.INVISIBLE else View.VISIBLE
+        // Hide the window surface too: a retained compositor buffer must not be captured as
+        // the next source merely because its child View has become invisible.
+        layerParams.alpha = if (value || renderer.blocks.length() == 0) 0f else passthroughAlpha
+        if (value || renderer.blocks.length() == 0) detachRendererSurface()
+        else attachRendererSurface()
         controls.alpha = if (value) 0f else 1f
         SessionState.overlayVisible.value = !value && renderer.blocks.length() > 0
     }
-    fun close() { SessionState.overlayVisible.value = false; runCatching { wm.removeView(renderer) }; runCatching { wm.removeView(controls) } }
-    private fun screenBounds(): Rect = if (Build.VERSION.SDK_INT >= 30) wm.maximumWindowMetrics.bounds
-        else Rect(0, 0, context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels)
+
+    fun close() {
+        SessionState.overlayVisible.value = false
+        runCatching { wm.removeView(renderer) }
+        rendererAttached = false
+        runCatching { wm.removeView(controls) }
+    }
+
+    private fun screenBounds(): Rect = if (Build.VERSION.SDK_INT >= 30) {
+        wm.maximumWindowMetrics.bounds
+    } else {
+        Rect(0, 0, context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels)
+    }
+
     private fun sourceRegion(): Rect = screenBounds().let { screen ->
         SubtitleRegion.pixels(settings.subtitleRegion, screen.width(), screen.height()).apply { offset(screen.left, screen.top) }
     }
-    private fun controlsRect(): Rect = Rect(bubbleParams.x, bubbleParams.y, bubbleParams.x + bubbleParams.width,
-        bubbleParams.y + controls.measuredHeight.takeIf { it > 0 }.let { it ?: (120 * density).toInt() })
+
+    private fun controlsRect(): Rect = Rect(
+        bubbleParams.x,
+        bubbleParams.y,
+        bubbleParams.x + bubbleParams.width,
+        bubbleParams.y + controls.measuredHeight.takeIf { it > 0 }.let { it ?: (120 * density).toInt() }
+    )
+
     private fun keepControlsOutsideRegion(): Boolean {
         if (!settings.adjacentSubtitles) return true
         val current = controlsRect()
         val screen = screenBounds()
         val roi = sourceRegion()
-        val caption = if (renderer.blocks.length() > 0 && layerParams.width > 0 && layerParams.height > 0)
-            Rect(layerParams.x, layerParams.y, layerParams.x + layerParams.width, layerParams.y + layerParams.height) else null
+        val caption = if (renderer.blocks.length() > 0 && layerParams.width > 0 && layerParams.height > 0) {
+            Rect(layerParams.x, layerParams.y, layerParams.x + layerParams.width, layerParams.y + layerParams.height)
+        } else {
+            null
+        }
         fun safe(rect: Rect) = screen.contains(rect) && !Rect.intersects(rect, roi) && (caption == null || !Rect.intersects(rect, caption))
         if (safe(current)) return true
         val gap = (8 * density).toInt()
-        // Prefer screen corners for controls so the adjacent caption has room by the ROI.
         val placed = listOf(
             Rect(screen.left + gap, screen.top + gap, screen.left + gap + current.width(), screen.top + gap + current.height()),
             Rect(screen.right - gap - current.width(), screen.top + gap, screen.right - gap, screen.top + gap + current.height()),
@@ -199,16 +324,19 @@ class TranslationOverlay(private val context: Context, private val settings: App
             OverlayPlacement.outside(screen, roi, current.width(), current.height(), gap)
         ).filterNotNull().firstOrNull { safe(it) } ?: return false
         if (bubbleParams.x != placed.left || bubbleParams.y != placed.top) {
-            bubbleParams.x = placed.left; bubbleParams.y = placed.top
+            bubbleParams.x = placed.left
+            bubbleParams.y = placed.top
             wm.updateViewLayout(controls, bubbleParams)
         }
         return true
     }
+
     fun prepareForCapture(): Boolean {
         val safe = keepControlsOutsideRegion()
         if (!safe) feedback("Thu hẹp VÙNG để thanh nút nằm ngoài vùng OCR.", true)
         return safe
     }
+
     fun updateBounds() {
         val bounds = screenBounds()
         bubbleParams.x = bubbleParams.x.coerceIn(0, (bounds.width() - bubbleParams.width).coerceAtLeast(0))
@@ -218,6 +346,7 @@ class TranslationOverlay(private val context: Context, private val settings: App
         renderKey = ""
         if (renderer.blocks.length() > 0) show(renderer.blocks)
     }
+
     private fun fontPixels(): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.fontSize.toFloat(), context.resources.displayMetrics)
 
     private fun layoutCover(): Boolean {
@@ -230,56 +359,81 @@ class TranslationOverlay(private val context: Context, private val settings: App
         val text = (0 until renderer.blocks.length()).joinToString("\n") { renderer.blocks.getJSONObject(it).getString("text") }
         val gap = (8 * density).toInt()
         val roi = sourceRegion()
-        val availableHeight = if (settings.adjacentSubtitles) maxOf(roi.top - bounds.top - gap, bounds.bottom - roi.bottom - gap,
-            (48 * density).toInt()) else (region.height() * bounds.height()).toInt()
+        val availableHeight = if (settings.adjacentSubtitles) {
+            maxOf(roi.top - bounds.top - gap, bounds.bottom - roi.bottom - gap, (48 * density).toInt())
+        } else {
+            (region.height() * bounds.height()).toInt()
+        }
         renderer.prepareCover(text, width, availableHeight)
-        val height = (if (settings.adjacentSubtitles) renderer.coverHeight else maxOf(bottom - top + 16 * density,
-            renderer.coverHeight.toFloat()).toInt()).coerceIn(1, bounds.height())
-        val placed = if (settings.adjacentSubtitles) OverlayPlacement.outside(bounds, roi, width, height, gap) ?: return false
-            else Rect((region.left * bounds.width()).toInt(), ((top + bottom - height) / 2).toInt().coerceIn(0, bounds.height() - height),
-                (region.left * bounds.width()).toInt() + width, ((top + bottom - height) / 2).toInt().coerceIn(0, bounds.height() - height) + height)
+        val height = (if (settings.adjacentSubtitles) {
+            renderer.coverHeight
+        } else {
+            maxOf(bottom - top + 16 * density, renderer.coverHeight.toFloat()).toInt()
+        }).coerceIn(1, bounds.height())
+        val placed = if (settings.adjacentSubtitles) {
+            OverlayPlacement.outside(bounds, roi, width, height, gap) ?: return false
+        } else {
+            Rect(
+                (region.left * bounds.width()).toInt(),
+                ((top + bottom - height) / 2).toInt().coerceIn(0, bounds.height() - height),
+                (region.left * bounds.width()).toInt() + width,
+                ((top + bottom - height) / 2).toInt().coerceIn(0, bounds.height() - height) + height
+            )
+        }
         val changed = layerParams.width != placed.width() || layerParams.height != placed.height() ||
-            layerParams.x != placed.left || layerParams.y != placed.top || layerParams.alpha != 1f
-        layerParams.width = placed.width(); layerParams.height = placed.height()
-        layerParams.x = placed.left; layerParams.y = placed.top
-        // Opaque touchable caption window; automatic full-display mode keeps it outside the source ROI.
-        // A full-screen opaque NOT_TOUCHABLE overlay would block input on Android 12+.
-        layerParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-        layerParams.alpha = 1f
-        if (changed) wm.updateViewLayout(renderer, layerParams)
+            layerParams.x != placed.left || layerParams.y != placed.top || layerParams.flags != SUBTITLE_PASSTHROUGH_FLAGS
+        layerParams.width = placed.width()
+        layerParams.height = placed.height()
+        layerParams.x = placed.left
+        layerParams.y = placed.top
+        // Requirement 5: ALWAYS keep FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE so touches pass through freely
+        layerParams.flags = SUBTITLE_PASSTHROUGH_FLAGS
+        layerParams.alpha = passthroughAlpha
+        if (changed && rendererAttached) wm.updateViewLayout(renderer, layerParams)
         return !settings.adjacentSubtitles || keepControlsOutsideRegion()
     }
 
     private inner class RenderView(context: Context) : View(context) {
         var blocks = JSONArray()
         var onDrawn: (() -> Unit)? = null
-        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
         private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private var coverLines = emptyList<String>()
         private var coverFont = 20f
         var coverHeight = 1
+
         fun prepareCover(text: String, availableWidth: Int, availableHeight: Int) {
             textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             textPaint.textSize = fontPixels()
             while (textPaint.textSize > 12 * density &&
-                (wrap(text, availableWidth - 24 * density, 8).size * textPaint.textSize * 1.25f + 16 * density > availableHeight)) textPaint.textSize -= density
+                (wrap(text, availableWidth - 24 * density, 8).size * textPaint.textSize * 1.25f + 16 * density > availableHeight)
+            ) {
+                textPaint.textSize -= density
+            }
             coverFont = textPaint.textSize
             coverLines = wrap(text, availableWidth - 24 * density, 6)
             coverHeight = (coverLines.size * coverFont * 1.25f + 16 * density).toInt()
         }
+
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (blocks.length() == 0) return
-            backgroundPaint.color = Color.argb((settings.opacity * 255).toInt(), 13, 24, 31)
+            backgroundPaint.color = Color.argb(if (settings.subtitleBackground) (settings.opacity.coerceIn(0f, 1f) * 255).toInt() else 0, 13, 24, 31)
             textPaint.color = settings.textColor
             textPaint.textSize = fontPixels()
             if (settings.overlay == "cover" || settings.adjacentSubtitles) {
-                backgroundPaint.color = Color.argb(255, 10, 16, 22)
+                backgroundPaint.color = Color.argb(if (settings.subtitleBackground) (235 * settings.opacity.coerceIn(0f, 1f)).toInt() else 0, 10, 16, 22)
                 canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 8 * density, 8 * density, backgroundPaint)
-                textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD); textPaint.textSize = coverFont
+                textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                textPaint.textSize = coverFont
                 val lineHeight = coverFont * 1.25f
                 val y = (height - coverLines.size * lineHeight) / 2 - textPaint.ascent()
-                coverLines.forEachIndexed { i, line -> canvas.drawText(line, (width - textPaint.measureText(line)) / 2, y + i * lineHeight, textPaint) }
+                coverLines.forEachIndexed { i, line ->
+                    drawSubtitleLine(canvas, line, (width - textPaint.measureText(line)) / 2, y + i * lineHeight)
+                }
             } else if (settings.overlay == "subtitle") {
                 val text = (0 until blocks.length()).joinToString("\n") { blocks.getJSONObject(it).getString("text") }
                 val maxWidth = width * .88f
@@ -289,7 +443,9 @@ class TranslationOverlay(private val context: Context, private val settings: App
                 val x = (width - maxWidth) / 2
                 val y = (height * settings.subtitleY).coerceAtMost(height - h - 20 * density).coerceAtLeast(24 * density)
                 canvas.drawRoundRect(x, y, x + maxWidth, y + h, 14 * density, 14 * density, backgroundPaint)
-                lines.forEachIndexed { i, line -> canvas.drawText(line, x + 16 * density, y + 12 * density - textPaint.ascent() + i * lineHeight, textPaint) }
+                lines.forEachIndexed { i, line ->
+                    drawSubtitleLine(canvas, line, x + 16 * density, y + 12 * density - textPaint.ascent() + i * lineHeight)
+                }
             } else {
                 for (i in 0 until blocks.length()) {
                     val block = blocks.getJSONObject(i)
@@ -305,15 +461,33 @@ class TranslationOverlay(private val context: Context, private val settings: App
                     canvas.save()
                     canvas.clipRect(x, y, x + w, y + actualH)
                     canvas.drawRoundRect(x, y, x + w, y + actualH, 4 * density, 4 * density, backgroundPaint)
-                    lines.forEachIndexed { j, line -> canvas.drawText(line, x + 6 * density, y + 4 * density - textPaint.ascent() + j * lineHeight, textPaint) }
+                    lines.forEachIndexed { j, line ->
+                        drawSubtitleLine(canvas, line, x + 6 * density, y + 4 * density - textPaint.ascent() + j * lineHeight)
+                    }
                     canvas.restore()
                 }
             }
         }
+
+        private fun drawSubtitleLine(canvas: Canvas, text: String, x: Float, y: Float) {
+            if (settings.subtitleOutline) {
+                val color = textPaint.color
+                textPaint.style = Paint.Style.STROKE
+                textPaint.strokeWidth = maxOf(density, textPaint.textSize * .07f)
+                textPaint.color = Color.BLACK
+                canvas.drawText(text, x, y, textPaint)
+                textPaint.style = Paint.Style.FILL
+                textPaint.color = color
+            }
+            canvas.drawText(text, x, y, textPaint)
+        }
+
         override fun draw(canvas: Canvas) {
             super.draw(canvas)
+            com.gemini.ocr.AndroidPerformanceTelemetry.counters.recordFrame(com.gemini.ocr.PerformanceFrameStage.CANVAS_DRAWN)
             onDrawn?.also { onDrawn = null }?.invoke()
         }
+
         private fun wrap(text: String, maxWidth: Float, maxLines: Int): List<String> {
             val output = mutableListOf<String>()
             for (paragraph in text.split('\n')) {
@@ -336,4 +510,3 @@ class TranslationOverlay(private val context: Context, private val settings: App
         }
     }
 }
-

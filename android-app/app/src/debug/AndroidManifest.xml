@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- A normal debug build removes only an absent marker. The guarded verificationOffline
+         property selects INTERNET, removing declarations from main and dependency manifests.
+         This debug-only overlay is never merged into the product's release manifest. -->
+    <uses-permission android:name="${verificationInternetPermission}" tools:node="remove" />
+</manifest>
