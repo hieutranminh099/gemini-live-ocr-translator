@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 
 /** Caller must explicitly confirm the freshly reviewed project; no render or public export required. */
@@ -32,7 +33,7 @@ data class MovieSourceSnapshot(
         val timeline = VideoTimeline.validate(rows, duration)
         return copy(cues = timeline, revisedAt = time,
             revision = revision(sha256, bytes, width, height, timeline, style, sourceRoi, sourceMode))
-            .also { it.validate(duration) }
+            .also { it.validateContents(duration) }
     }
 
     private fun schemaVersion(): Int = if (style.legacyDefault &&
@@ -46,27 +47,32 @@ data class MovieSourceSnapshot(
         .put("sourceRoi", JSONArray(sourceRoi)).put("sourceMode", sourceMode.name)
 
     internal fun validate(duration: Long) {
+        validateContents(duration)
+        require(VideoTimeline.validate(cues, duration) == cues) { "Timeline chưa được sắp xếp hợp lệ." }
+        require(revision == revision(sha256, bytes, width, height, cues, style, sourceRoi, sourceMode)) { "Snapshot phụ đề đã thay đổi hoặc không hợp lệ." }
+    }
+
+    private fun validateContents(duration: Long) {
         require(bytes in 1..MovieSourceAccess.MAX_BYTES && sha256.matches(Regex("[a-f0-9]{64}")))
         require(width in 1..16384 && height in 1..16384 && duration in 1..86_400_000L && revisedAt > 0)
         require(projectId.isBlank() || projectId.matches(Regex("[a-f0-9-]{36}")))
         require(uri.isBlank() || Uri.parse(uri).scheme in setOf("file", "content"))
         require(cues.isNotEmpty() && cues.all { it.translation.isNotBlank() }) { "Hoàn tất bản dịch trước khi lưu Kho phim." }
         require(cues.sumOf { it.source.length.toLong() + it.translation.length + it.localDraft.length } <= 2_000_000L)
-        require(VideoTimeline.validate(cues, duration) == cues) { "Timeline chưa được sắp xếp hợp lệ." }
         require(sourceRoi.size == 4 && sourceRoi.all { it.isFinite() && it in 0f..1f } &&
             sourceRoi[2] > sourceRoi[0] && sourceRoi[3] > sourceRoi[1]) { "Vùng chữ nguồn chưa hợp lệ." }
-        require(revision == revision(sha256, bytes, width, height, cues, style, sourceRoi, sourceMode)) { "Snapshot phụ đề đã thay đổi hoặc không hợp lệ." }
     }
 
     companion object {
         internal fun freeze(project: VideoProject, sha: String, bytes: Long, uri: String = project.uri,
                             revisedAt: Long = System.currentTimeMillis()): MovieSourceSnapshot {
             require(!project.sourceExtractionPending) { "Chưa nhận hết phụ đề nguồn; tiếp tục xử lý trước khi lưu Kho phim." }
-            val cues = VideoTimeline.validate(project.cues, project.durationMs).toList()
+            val cues = VideoTimeline.validate(project.cues, project.durationMs)
+            val roi = project.roi.toList()
             return MovieSourceSnapshot(project.id, uri, sha, bytes, project.width, project.height, cues,
-                project.style, revision(sha, bytes, project.width, project.height, cues, project.style, project.roi, project.sourceMode),
-                revisedAt, project.roi.toList(), project.sourceMode)
-                .also { it.validate(project.durationMs) }
+                project.style, revision(sha, bytes, project.width, project.height, cues, project.style, roi, project.sourceMode),
+                revisedAt, roi, project.sourceMode)
+                .also { it.validateContents(project.durationMs) }
         }
         internal fun from(j: JSONObject): MovieSourceSnapshot {
             val schema = j.getInt("schema")
@@ -88,9 +94,12 @@ data class MovieSourceSnapshot(
                              sourceRoi: List<Float>, sourceMode: VideoSourceMode): String {
             // Length-prefixed fields make the identity independent of JSONObject key order/platform.
             val digest = MessageDigest.getInstance("SHA-256")
+            val size = ByteBuffer.allocate(Int.SIZE_BYTES)
             fun field(value: Any) {
                 val data = value.toString().toByteArray(Charsets.UTF_8)
-                digest.update(java.nio.ByteBuffer.allocate(4).putInt(data.size).array()); digest.update(data)
+                size.putInt(0, data.size)
+                digest.update(size.array())
+                digest.update(data)
             }
             listOf(sha, bytes, width, height, style.position, style.sizeFraction, style.background, style.outline,
                 style.frame?.left ?: "", style.frame?.top ?: "", style.frame?.right ?: "", style.frame?.bottom ?: "").forEach(::field)

@@ -1,0 +1,71 @@
+name: Single-video Android benchmark
+
+on:
+  push:
+    branches: [perf/single-video]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: single-video-gemini-benchmark
+  cancel-in-progress: false
+
+jobs:
+  android-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check benchmark credential
+        env:
+          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_BENCHMARK_API_KEY" ]; then
+            echo 'Add the benchmark credential as an Actions secret before rerunning.' >&2
+            exit 1
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android environment and sample video
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -qq install ffmpeg fonts-noto-cjk
+          sudo chmod a+rw /dev/kvm
+          echo 'no' | sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'system-images;android-34;google_apis;x86_64'
+          echo 'no' | avdmanager create avd --name gemini-benchmark --package 'system-images;android-34;google_apis;x86_64'
+          python3 scripts/generate_single_video_ocr_fixture.py "$RUNNER_TEMP/video/benchmark.mp4"
+      - name: Build isolated baseline and candidate APKs
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/baseline"
+          git worktree add --detach "$baseline" a67e6ea910483d740fa988bcd682d18c4b93d5c7
+          test_path=android-app/app/src/androidTest/java/com/gemini/ocr/batch/SingleVideoGeminiBenchmarkTest.kt
+          install -D "$test_path" "$baseline/$test_path"
+          python3 scripts/setup_android_asr.py
+          mkdir -p "$baseline/android-app/app/libs"
+          cp android-app/app/libs/sherpa-onnx-static-link-onnxruntime-2.0.1-app.aar "$baseline/android-app/app/libs/"
+          (cd "$baseline/android-app" && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId=com.gemini.ocr.perfbase)
+          (cd android-app && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId=com.gemini.ocr.perfnext)
+      - name: Start one Android emulator
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd gemini-benchmark -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -cores 2 -memory 2048 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [[ $(adb shell getprop sys.boot_completed | tr -d "\r") == 1 ]]; do sleep 3; done'
+          adb shell input keyevent 82
+      - name: Measure baseline and candidate with native OCR and Gemini
+        env:
+          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$RUNNER_TEMP/video/benchmark.mp4"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: single-video-android-results
+          path: ${{ runner.temp }}/results/*.json
+          retention-days: 7

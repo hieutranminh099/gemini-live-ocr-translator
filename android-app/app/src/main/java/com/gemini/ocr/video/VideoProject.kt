@@ -149,13 +149,16 @@ data class VideoProject(
         (speech.optBoolean("asrActive") && !speech.optBoolean("complete")) ||
         (sourceMode == VideoSourceMode.AUTO && speech.optBoolean("probeComplete") &&
             speech.optString("resolvedSource") == "OCR" && !speech.optBoolean("resolutionComplete"))
-    fun json() = JSONObject().put("schema",1).put("id",id).put("title",title).put("uri",uri)
+    fun json() = json(includeCues = true)
+
+    internal fun json(includeCues: Boolean) = JSONObject().put("schema",1).put("id",id).put("title",title).put("uri",uri)
         .put("durationMs",durationMs).put("width",width).put("height",height)
         .put("sourceMode",sourceMode.name).put("translationMode",translationMode.name)
         .put("subtitleUri",subtitleUri).put("subtitleName",subtitleName).put("trackId",trackId)
         .put("roi",JSONArray(roi)).put("style",style.json()).put("stage",stage.name)
         .put("resumeStage",resumeStage.name).put("progress",progress).put("message",message)
-        .put("cues",JSONArray(cues.map{it.json()})).put("scanMs",scanMs).put("carry",carry)
+        .also { if (includeCues) it.put("cues", JSONArray(cues.map { cue -> cue.json() })) }
+        .put("scanMs",scanMs).put("carry",carry)
         .put("glossary",glossary).put("profile",profile).put("model",model)
         .put("elapsedMs",elapsedMs).put("maxPssKiB",maxPssKiB).put("updatedAt",updatedAt)
         .put("exportedMp4",exportedMp4).put("cloudCalls",cloudCalls)

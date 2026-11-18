@@ -42,12 +42,19 @@ class MovieCloudSync internal constructor(private val context:Context) {
     private val operation=Mutex()
     private val progressQueuedAt=ConcurrentHashMap<String,Long>()
 
+    internal fun initialLocalSaveMessage(account:String):String? {
+        val selected=identity.state.value
+        return LOCAL_SAVE_MESSAGE.takeIf {
+            selected.accountEmail==account && (account.isBlank() || selected.authorizationRequired)
+        }
+    }
+
     fun enqueue(id:String)=scheduleUpload(id,ExistingWorkPolicy.KEEP)
     private fun scheduleUpload(id:String,policy:ExistingWorkPolicy) {
         val movie=library.find(id)?:return
         val selected=identity.state.value
         if(selected.accountEmail.isBlank() || selected.authorizationRequired) {
-            library.update(id){it.copy(syncState="LOCAL",message="Đã lưu trong máy. Kết nối Google rồi bấm Thử đồng bộ để tải lên.")}
+            library.update(id){it.copy(syncState="LOCAL",message=LOCAL_SAVE_MESSAGE)}
             return
         }
         if(movie.accountEmail.isNotBlank() && movie.accountEmail!=selected.accountEmail)return
@@ -228,6 +235,7 @@ class MovieCloudSync internal constructor(private val context:Context) {
     }
     companion object {
         internal const val TAG="movie-cloud-sync"
+        private const val LOCAL_SAVE_MESSAGE="Đã lưu trong máy. Kết nối Google rồi bấm Thử đồng bộ để tải lên."
         @Volatile private var instance:MovieCloudSync?=null
         fun get(context:Context):MovieCloudSync=instance?:synchronized(this){instance?:MovieCloudSync(context.applicationContext).also{instance=it}}
     }

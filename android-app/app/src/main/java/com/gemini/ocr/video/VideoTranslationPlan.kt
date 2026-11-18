@@ -52,20 +52,18 @@ object VideoTranslationPlan {
      */
     fun nextCloudBatch(cues:List<VideoCue>,hybrid:Boolean,maxCues:Int=LEGACY_DEFAULT_CUES,maxSourceChars:Int=SOURCE_BUDGET):Batch?{
         require(maxCues in 1..MAX_CUES && maxSourceChars in 1..SOURCE_BUDGET)
-        val pending=cues.indices.filter{index->
-            val cue=cues[index]
-            !cue.protectedText && if(hybrid)needsCloudRefinement(cue) else cue.translation.isBlank()
-        }
-        if(pending.isEmpty())return null
         val indices=mutableListOf<Int>();var sourceChars=0;var draftChars=0
-        for(index in pending){
-            val cue=cues[index];val draft=if(hybrid)cue.localDraft.ifBlank{cue.translation} else ""
+        for(index in cues.indices){
+            val cue=cues[index]
+            if(cue.protectedText || !(if(hybrid)needsCloudRefinement(cue) else cue.translation.isBlank()))continue
+            val draft=if(hybrid)cue.localDraft.ifBlank{cue.translation} else ""
             require(cue.source.isNotBlank() && cue.source.length<=MAX_SINGLE_SOURCE){"Câu nguồn quá dài hoặc rỗng; hãy sửa/chia câu trước khi dịch."}
             require(!hybrid || draft.isNotBlank()){"Tạo bản nháp local trước khi Gemini hiệu đính; chưa gửi nhóm này."}
             require(draft.length<=MAX_SINGLE_DRAFT){"Bản nháp quá dài; hãy chia câu trước khi hiệu đính."}
             if(indices.isNotEmpty() && (indices.size>=maxCues || sourceChars+cue.source.length>maxSourceChars || draftChars+draft.length>DRAFT_BUDGET))break
             indices+=index;sourceChars+=cue.source.length;draftChars+=draft.length
         }
+        if(indices.isEmpty())return null
         return buildBatch(cues,hybrid,indices)
     }
 

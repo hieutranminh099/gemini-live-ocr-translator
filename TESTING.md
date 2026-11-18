@@ -110,3 +110,21 @@ python scripts/build_android.py --offline --max-workers=1 --stacktrace assembleD
 Kết quả phiên này: **15 test JVM độc lập đạt**, gồm 11 test điều phối trước đây, hai ca playback/extraction bổ sung và hai ca quyền ưu tiên playback. Compiler 2.1.10 chạy trực tiếp từ dependency có sẵn; không thay bằng kết quả Gradle. Các test tích hợp Robolectric mới chưa chạy được. Gradle bị chặn trước compile vì socket localhost trả `Permission denied: getsockopt`; `--no-daemon` vẫn cần single-use daemon. Cache còn thiếu Media3 1.5.1; thử đọc metadata công khai từ Maven Google thất bại DNS. Không xóa cache, mở quyền socket, đổi DNS/proxy hay toolchain. Chưa có APK mới, test emulator/điện thoại, OCR/ASR native, Gemini thật hoặc số đo xử lý phim/RAM.
 
 Diff trước sửa, bản sao các file được giao, log và runner độc lập nằm tại `build/batch-integration-20261110-v1812/`. Lệnh tái lập phần độc lập: `python build/batch-integration-20261110-v1812/run_core_tests.py`. Thời gian JUnit là thời gian chạy fixture, không phải hiệu năng xử lý 10 tập phim.
+
+## Đo thời gian xử lý một video đến Kho phim
+
+Tạo một bộ MP4/SRT tổng hợp bằng `python scripts/generate_single_video_benchmark_fixture.py build/single-video-fixture --cues 4000`. Dùng cùng thư mục đầu vào và cùng bản kiểm thử `SingleVideoBatchBenchmarkTest` trên hai worktree. Đặt `GEMINI_BATCH_BENCH_FIXTURE` thành đường dẫn tuyệt đối rồi chạy Gradle từ `android-app`.
+
+```sh
+./gradlew :app:testDebugUnitTest --rerun --tests com.gemini.ocr.batch.SingleVideoBatchBenchmarkTest
+```
+
+Mỗi bản chạy khởi động một lượt và đo ba lượt với dự án mới mỗi lần. Báo cáo `android-app/app/build/test-screenshots/single-video-batch-benchmark.json` ghi thời gian nhập video, xử lý, xác nhận lưu cục bộ và SHA-256 của timeline, yêu cầu dịch, yêu cầu hiệu đính và SRT. Phép đo chạy luồng batch, đọc SRT và ghi checkpoint/Kho phim thật trên Robolectric với metadata giả lập và phản hồi Gemini cố định.
+
+Kết quả ngày 18/11/2026 trên Codex Cloud, JDK 17 và Robolectric API 28. Bản phát hành `v1.8.18` (`a67e6ea`) có trung vị 17,71 giây (17,61–18,14 giây). Bản có sửa lỗi Kho phim và retry (`2cbcf87`) đạt 17,99 giây (17,85–20,17 giây). Bản tối ưu trên nền `2cbcf87` đạt 6,08 giây (6,02–6,35 giây). Ba bản ghi 1.012 checkpoint, giữ đủ 4.000 câu và có cùng SHA-256 của timeline, yêu cầu gửi, SRT và revision Kho phim. Số lượt gọi Gemini thật là 0 ở cả ba bản.
+
+Đo trên thiết bị để kiểm tra tốc độ với OCR và Gemini thật. Dùng cùng clip, thiết lập, thiết bị, điều kiện mạng và trạng thái bộ đệm. Ghi từ lúc chọn video tới khi mục phim đã lưu xuất hiện, loại thời gian chờ người bấm xác nhận. Kiểm tra đủ câu và các mốc thời gian sau mỗi lượt. Dùng video thử nghiệm và tài khoản đã được phép dùng cho phép đo.
+
+### Đo OCR và Gemini thật trên giả lập GitHub Actions
+
+Workflow `Single-video Android benchmark` chạy khi nhánh `perf/single-video` được đẩy lên. Tạo Actions secret `GEMINI_BENCHMARK_API_KEY` trước khi chạy. Hai APK debug dùng package thử riêng và cùng một video tổng hợp 96 giây có chữ Trung trong hình. Workflow chạy xen kẽ ba lượt mỗi bản, xóa dữ liệu của package thử giữa các lượt và giữ báo cáo JSON trong artifact `single-video-android-results`. Báo cáo ghi trung vị từ nhập video đến xác nhận Kho phim, thời gian từng đoạn, số câu, số lượt gọi và mã băm timeline OCR. Clip thử nghiệm được dịch bằng tài khoản Gemini của khóa thử. Kết quả áp dụng cho giả lập Android của GitHub.

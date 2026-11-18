@@ -87,11 +87,14 @@ data class MovieRecord(
             return result
         }
         internal fun validate(record:MovieRecord) {
+            validateMetadata(record)
+            record.episodes.forEach{it.source?.validate(it.durationMs)}
+        }
+        internal fun validateMetadata(record:MovieRecord) {
             require(record.id.matches(Regex("[a-f0-9-]{36}")) && record.title.isNotBlank() && record.title.length<=200)
             require(record.confirmedAt>0 && record.titleUpdatedAt>=0 && record.episodes.isNotEmpty())
             require(record.episodes.map{it.id}.toSet().size==record.episodes.size)
             require(record.episodes.all{it.id.isNotBlank() && it.id.length<=200 && it.title.length<=200 && it.durationMs>0 && it.positionMs in 0..it.durationMs && it.positionUpdatedAt>=0})
-            record.episodes.forEach{it.source?.validate(it.durationMs)}
         }
     }
 }
@@ -353,6 +356,7 @@ class MovieLibrary internal constructor(
             }
             check(VideoJobs.get(context).busy.value==null && VideoJobs.get(context).batchBusy.value==null){"Đợi xử lý dừng trước khi xác nhận Kho phim."}
             val account=currentAccount();val folder=folder(id);val created=mutableListOf<File>();var published=false
+            val cloud=MovieCloudSync.get(context)
             try {
                 val revision=UUID.randomUUID().toString()
                 val savedEpisodes=additions.mapIndexed{index,input->
@@ -390,22 +394,32 @@ class MovieLibrary internal constructor(
                 }
                 val record=synchronized(storageLock) {
                     require(currentAccount()==account){"Tài khoản đã thay đổi; chưa thêm tập vào Kho phim."}
-                    if(appendToExisting) {
+                    val localSaveMessage=cloud.initialLocalSaveMessage(account)
+                    val confirmed=if(appendToExisting) {
                         val current=requireNotNull(find(id)){"Bộ phim đã bị xóa; chưa thêm tập mới."}
                         require(!isHidden(current.accountEmail,id)){"Bộ phim đã bị xóa khỏi thiết bị."}
                         require(current.episodes.all(::isAvailable)){"Nguồn của tập cũ không còn đọc được. Tải lại trước khi thêm tập."}
                         val fresh=savedEpisodes.filter { added -> current.episodes.none { it.id==added.id } }
-                        save(current.copy(episodes=current.episodes+fresh,syncState="LOCAL",
+                        current.copy(episodes=current.episodes+fresh,syncState="LOCAL",
                             updatedAt=maxOf(System.currentTimeMillis(),current.updatedAt+1),
-                            message=if(current.episodes.any{!isAvailable(it)}) "Đã thêm tập mới. Tải các tập cũ ngoại tuyến trước khi đồng bộ lại toàn bộ."
-                                else "Đã thêm ${fresh.size} tập mới; giữ nguyên các tập và vị trí xem cũ."))
-                    } else save(MovieRecord(id,title.trim().take(200),savedEpisodes,accountEmail=account,
-                        coverPath=cover.takeIf{it.isFile && it.length()>0}?.absolutePath.orEmpty(),
-                        message="Đã lưu video gốc và phụ đề riêng; không mã hóa lại hình ảnh."))
+                            message=localSaveMessage ?: if(current.episodes.any{!isAvailable(it)})
+                                "Đã thêm tập mới. Tải các tập cũ ngoại tuyến trước khi đồng bộ lại toàn bộ."
+                                else "Đã thêm ${fresh.size} tập mới; giữ nguyên các tập và vị trí xem cũ.")
+                            .also(MovieRecord::validate)
+                    } else {
+                        // Every source was frozen and validated before acquiring the catalog lock.
+                        MovieRecord(id,title.trim().take(200),savedEpisodes,accountEmail=account,
+                            coverPath=cover.takeIf{it.isFile && it.length()>0}?.absolutePath.orEmpty(),
+                            message=localSaveMessage ?: "Đã lưu video gốc và phụ đề riêng; không mã hóa lại hình ảnh.")
+                            .also(MovieRecord::validateMetadata)
+                    }
+                    persist(confirmed,publish=false)
+                    published=true
+                    hidden.edit().remove(hiddenKey(account,id)).apply()
+                    publishCatalog()
+                    confirmed
                 }
-                published=true;hidden.edit().remove(hiddenKey(account,id)).apply()
-                synchronized(storageLock){publishCatalog()}
-                if(currentAccount()==account)MovieCloudSync.get(context).enqueue(id)
+                if(currentAccount()==account)cloud.enqueue(id)
                 find(id)?:record
             } catch(e:Throwable){if(!published)created.forEach{it.delete()};throw e}
         }

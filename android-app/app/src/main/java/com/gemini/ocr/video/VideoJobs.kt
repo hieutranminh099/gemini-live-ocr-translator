@@ -312,6 +312,7 @@ class VideoJobs internal constructor(
             }.getOrNull()
             var timingStage=intended
             val previousStageError = pipelineStage?.let { p.pipeline.task(it).errorCode }.orEmpty()
+            val checkpointEncoding = VideoCheckpointEncoding()
             suspend fun persist(next:VideoProject){
                 val now=SystemClock.elapsedRealtime();val info=Debug.MemoryInfo();Debug.getMemoryInfo(info)
                 val delta=(now-lastTick).coerceAtLeast(0)
@@ -333,7 +334,7 @@ class VideoJobs internal constructor(
                 p=store.save(captured.copy(elapsedMs=p.elapsedMs+delta,maxPssKiB=maxOf(p.maxPssKiB,info.totalPss.toLong()),resumeStage=intended,
                     extractionElapsedMs=p.extractionElapsedMs+if(timingStage==VideoStage.EXTRACTING)delta else 0,
                     translationElapsedMs=p.translationElapsedMs+if(timingStage==VideoStage.TRANSLATING)delta else 0,
-                    exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0))
+                    exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0), checkpointEncoding)
                 runCatching {
                     smartMetrics.add("checkpoint_writes")
                     smartMetrics.add("checkpoint_wall_ms", (System.nanoTime() - checkpointAt) / 1_000_000L)
