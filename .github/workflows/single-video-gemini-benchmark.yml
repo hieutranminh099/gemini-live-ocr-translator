@@ -103,6 +103,7 @@ jobs:
             fi
             sleep 3
           done
+          adb shell svc power stayon true
           adb shell input keyevent 82
       - name: Measure baseline and candidate with native OCR and Gemini
         env:

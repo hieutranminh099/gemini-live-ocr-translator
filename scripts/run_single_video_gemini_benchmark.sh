@@ -8,6 +8,13 @@ fixture=$4
 : "${GEMINI_BENCHMARK_API_KEY:?Missing benchmark credential}"
 mkdir -p "$results"
 
+report_failure() {
+  local package=$1 report=$2
+  grep -oE 'kotlinx\.coroutines\.TimeoutCancellationException|java\.lang\.(AssertionError|IllegalArgumentException|IllegalStateException|SecurityException)' "$report" | sort -u || true
+  grep -E 'Batch did not reach review|Expected actual OCR|Expected real Gemini|Benchmark checkpoint did not advance|FAILURES|Tests run:' "$report" || true
+  adb exec-out run-as "$package" cat files/benchmark-progress.jsonl 2>/dev/null | tail -18 || true
+}
+
 run_variant() {
   local variant=$1 run=$2
   local package="com.gemini.ocr.$variant"
@@ -22,11 +29,12 @@ run_variant() {
     -e class com.gemini.ocr.batch.SingleVideoGeminiBenchmarkTest \
     -e singleVideoGeminiBenchmark true "$test_package/androidx.test.runner.AndroidJUnitRunner" > "$report"; then
     echo "Instrumentation failed for $variant, run $run" >&2
+    report_failure "$package" "$report"
     return 1
   fi
   # Success requires both the JUnit result and the report from a completed app run.
   if ! grep -Fq 'OK (1 test)' "$report"; then
-    grep -E 'Batch did not reach review|Expected actual OCR|Expected real Gemini|FAILURES|Tests run:' "$report" || true
+    report_failure "$package" "$report"
     return 1
   fi
   adb exec-out run-as "$package" cat files/benchmark-result.json > "$results/$variant-$run.json"
