@@ -20,14 +20,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check benchmark credential
-        env:
-          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
-        run: |
-          if [ -z "$GEMINI_BENCHMARK_API_KEY" ]; then
-            echo 'Add the benchmark credential as an Actions secret before rerunning.' >&2
-            exit 1
-          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -62,6 +54,10 @@ jobs:
         env:
           GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: |
+          if [ -z "$GEMINI_BENCHMARK_API_KEY" ]; then
+            echo 'The build and emulator checks passed. Add GEMINI_BENCHMARK_API_KEY as a repository Actions secret, then rerun.' >&2
+            exit 1
+          fi
           bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$RUNNER_TEMP/video/benchmark.mp4"
       - uses: actions/upload-artifact@v4
         if: always()
