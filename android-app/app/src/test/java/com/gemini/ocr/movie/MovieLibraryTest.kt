@@ -77,6 +77,14 @@ class MovieLibraryTest {
         assertEquals(1000L,reopened.find(movie.id)!!.episodes.single().positionMs)
         assertTrue(File(reopened.find(movie.id)!!.episodes.single().path).isFile)
     }
+    @Test fun anotherStoreInstanceReadsCommittedProgressAndRemoval()=runBlocking {
+        val movie=library.confirm(UUID.randomUUID().toString(),"Watch later",listOf(episode("EP01")))
+        val reopened=MovieLibrary(context,validateVideo={1000L},makeCover={_,_->})
+        library.progress(movie.id,movie.episodes.single().id,500)
+        assertEquals(500L,reopened.find(movie.id)!!.episodes.single().positionMs)
+        library.remove(movie.id)
+        assertNull(reopened.find(movie.id))
+    }
     @Test fun localMergeKeepsPositionOnEqualClockConflictAndShowsNotice() {
         val identity=VideoCloudSync.get(context);identity.rememberVerifiedAccount("conflict@example.com")
         val stamp=System.currentTimeMillis()

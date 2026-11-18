@@ -19,6 +19,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -103,12 +105,16 @@ class MovieLibrary internal constructor(
     private val root=File(context.filesDir,"movie-library").apply{mkdirs()}
     private val hidden=context.getSharedPreferences("movie-library-hidden",Context.MODE_PRIVATE)
     private val mutable=MutableStateFlow<List<MovieRecord>>(emptyList())
+    private val records=mutableMapOf<String,MovieRecord>()
+    private var catalogVersion=-1L
     val movies:StateFlow<List<MovieRecord>> = mutable
     internal val operation=Mutex()
     init {
         refresh()
         CoroutineScope(SupervisorJob()+Dispatchers.IO).launch {
-            VideoCloudSync.get(context).state.collect{refresh()}
+            VideoCloudSync.get(context).state.map{it.accountEmail}.distinctUntilChanged().collect{
+                synchronized(storageLock){publishCatalog()}
+            }
         }
     }
     internal fun folder(id:String):File {
@@ -116,15 +122,38 @@ class MovieLibrary internal constructor(
         return File(root,id).apply{mkdirs()}
     }
     internal fun currentAccount()=VideoCloudSync.get(context).state.value.accountEmail
-    private fun visible(p:MovieRecord)=p.accountEmail.isBlank() || p.accountEmail==currentAccount()
     private fun hiddenKey(account:String,id:String)="$account/$id"
     internal fun isHidden(account:String,id:String)=hidden.getBoolean(hiddenKey(account,id),false)
     internal fun all():List<MovieRecord> = synchronized(storageLock) {
-        root.listFiles().orEmpty().filter{it.isDirectory && it.name.matches(Regex("[a-f0-9-]{36}"))}
-            .mapNotNull{runCatching{read(File(it,"movie.json"))}.getOrNull()}
+        catalog().values.toList()
     }
-    internal fun find(id:String):MovieRecord?=all().firstOrNull{it.id==id && visible(it)}
-    internal fun refresh() { mutable.value=all().filter{visible(it) && !isHidden(it.accountEmail,it.id)}.sortedByDescending{it.confirmedAt} }
+    internal fun find(id:String):MovieRecord?=synchronized(storageLock) {
+        catalog()[id]?.takeIf { it.accountEmail.isBlank() || it.accountEmail==currentAccount() }
+    }
+    internal fun refresh()=synchronized(storageLock) {
+        reloadCatalog()
+        publishCatalog()
+    }
+    // Storage is private to this process. Only explicit reloads and writes by a different
+    // library instance need to parse and verify the movie manifests again.
+    private fun catalog():Map<String,MovieRecord> {
+        if(catalogVersion!=storageVersion)reloadCatalog()
+        return records
+    }
+    private fun reloadCatalog() {
+        records.clear()
+        root.listFiles().orEmpty().filter{it.isDirectory && it.name.matches(Regex("[a-f0-9-]{36}"))}
+            .forEach{directory->
+                runCatching{read(File(directory,"movie.json"))}.getOrNull()?.takeIf{it.id==directory.name}
+                    ?.let{records[it.id]=it}
+            }
+        catalogVersion=storageVersion
+    }
+    private fun publishCatalog() {
+        val account=currentAccount()
+        mutable.value=catalog().values.filter{(it.accountEmail.isBlank() || it.accountEmail==account) && !isHidden(it.accountEmail,it.id)}
+            .sortedByDescending{it.confirmedAt}
+    }
     private fun read(file:File):MovieRecord {
         require(file.length()<=32L*1024*1024)
         val bytes=AtomicFile(file).openRead().use{input->
@@ -136,14 +165,24 @@ class MovieLibrary internal constructor(
     }
     internal fun save(record:MovieRecord):MovieRecord = synchronized(storageLock) {
         MovieRecord.validate(record)
+        persist(record)
+    }
+    private fun persist(record:MovieRecord,publish:Boolean=true):MovieRecord {
+        catalog()
         val bytes=record.json().toString().toByteArray(Charsets.UTF_8)
         require(bytes.size<=32*1024*1024){"Danh mục phim quá lớn; bản cũ vẫn được giữ."}
         val file=AtomicFile(File(folder(record.id),"movie.json"));val out=file.startWrite()
         try{out.write(bytes);file.finishWrite(out)}catch(e:Throwable){file.failWrite(out);throw e}
-        refresh();record
+        records[record.id]=record
+        catalogVersion=++storageVersion
+        if(publish)publishCatalog()
+        return record
     }
     internal fun update(id:String,change:(MovieRecord)->MovieRecord):MovieRecord?=synchronized(storageLock) {
-        find(id)?.let{save(change(it))}
+        find(id)?.let{current->
+            val changed=change(current)
+            if(changed==current)current else save(changed)
+        }
     }
 
     /** A picker selection saves a local copy. Drive upload requires its own action. */
@@ -291,6 +330,7 @@ class MovieLibrary internal constructor(
                     message="Đã xác nhận và lưu trong máy."))
                 published=true
                 hidden.edit().remove(hiddenKey(record.accountEmail,id)).apply()
+                synchronized(storageLock){publishCatalog()}
                 if(currentAccount()==confirmingAccount)MovieCloudSync.get(context).enqueue(id)
                 find(id)?:record
             } catch(e:Throwable) { if(!published)created.forEach{it.delete()};throw e }
@@ -364,6 +404,7 @@ class MovieLibrary internal constructor(
                         message="Đã lưu video gốc và phụ đề riêng; không mã hóa lại hình ảnh."))
                 }
                 published=true;hidden.edit().remove(hiddenKey(account,id)).apply()
+                synchronized(storageLock){publishCatalog()}
                 if(currentAccount()==account)MovieCloudSync.get(context).enqueue(id)
                 find(id)?:record
             } catch(e:Throwable){if(!published)created.forEach{it.delete()};throw e}
@@ -383,10 +424,12 @@ class MovieLibrary internal constructor(
             require(hash.first==snapshot.sha256 && hash.second==snapshot.bytes){"Dự án đang dùng video nguồn khác; không thay timeline của phim này."}
             val changedAt=maxOf(System.currentTimeMillis(),old.updatedAt+1)
             val fresh=MovieSourceSnapshot.freeze(project,hash.first,hash.second,snapshot.uri,changedAt)
-            val current=requireNotNull(find(movieId))
-            require(current.episodes.first{it.id==episodeId}.source?.revision==expectedRevision){"Phụ đề đã thay đổi; bản hiện tại được giữ."}
-            val record=save(current.copy(episodes=current.episodes.map{if(it.id==episodeId)it.copy(source=fresh) else it},
-                syncState="LOCAL",updatedAt=changedAt,message="Đã cập nhật phụ đề đã kiểm tra; video gốc và vị trí xem được giữ."))
+            val record=requireNotNull(update(movieId){current->
+                require(current.episodes.firstOrNull{it.id==episodeId}?.source?.revision==expectedRevision){"Phụ đề đã thay đổi; bản hiện tại được giữ."}
+                current.copy(episodes=current.episodes.map{if(it.id==episodeId)it.copy(source=fresh) else it},
+                    syncState="LOCAL",updatedAt=maxOf(current.updatedAt+1,changedAt),
+                    message="Đã cập nhật phụ đề đã kiểm tra; video gốc và vị trí xem được giữ.")
+            })
             MovieCloudSync.get(context).enqueue(movieId);record
         }
     }
@@ -453,11 +496,12 @@ class MovieLibrary internal constructor(
                 current.source?.revision!=expectedSourceRevision))return@synchronized false
             val nextPosition = position.coerceIn(0, current.durationMs)
             if (observedAt != null && current.positionMs == nextPosition) return@synchronized false
-            val changedAt = observedAt ?: maxOf(System.currentTimeMillis(), p.updatedAt + 1)
+            val changedAt = observedAt?.takeIf { it >= 0 } ?: maxOf(System.currentTimeMillis(), p.updatedAt + 1)
             val episodes=p.episodes.map{if(it.id==episodeId)it.copy(positionMs=nextPosition,
                 positionUpdatedAt=changedAt,positionConflict=false) else it}
             // The snapshot clock orders uploads from this device. It is independent of the episode clock.
-            save(p.copy(episodes=episodes,updatedAt=maxOf(p.updatedAt+1,changedAt),message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
+            // Only the clamped position and clocks change. The cached timeline was already verified.
+            persist(p.copy(episodes=episodes,updatedAt=maxOf(p.updatedAt+1,changedAt),message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
                 else p.message.takeUnless{it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty()))
             true
         }
@@ -470,7 +514,9 @@ class MovieLibrary internal constructor(
         hidden.edit().putBoolean(hiddenKey(record.accountEmail,id),true).commit()
         deleteOwnedMedia(record)
         AtomicFile(File(folder(id),"movie.json")).delete()
-        refresh()
+        records.remove(id)
+        catalogVersion=++storageVersion
+        publishCatalog()
     }
     fun removeOffline(id:String) = synchronized(storageLock) {
         val p=find(id)?:return@synchronized
@@ -487,32 +533,49 @@ class MovieLibrary internal constructor(
     }
     internal fun mergeCloud(account:String,remote:List<MovieRecord>)=synchronized(storageLock) {
         require(account==currentAccount()){"Tài khoản Google đã thay đổi."}
-        for(p in remote) {
-            if(isHidden(account,p.id))continue
-            val old=all().firstOrNull{it.id==p.id}
-            if(old!=null && old.accountEmail!=account)continue
-            if(old==null)save(p.copy(accountEmail=account,syncState="CLOUD"))
-            else if(old.syncState in setOf("CLOUD","SYNCED")) {
-                val sourceChanged=old.episodes.map{it.id to it.source?.revision}!=p.episodes.map{it.id to it.source?.revision}
-                if(sourceChanged && old.episodes.any{isAvailable(it)}) {
-                    save(old.copy(syncState="CONFLICT",message="Phụ đề trên Drive khác bản trong máy. Đã giữ nguyên video và phụ đề đang có; kiểm tra hai phiên bản trước khi thay thế."))
-                    continue
+        try {
+            for(incoming in remote) {
+                require(account==currentAccount()){"Tài khoản Google đã thay đổi."}
+                if(isHidden(account,incoming.id))continue
+                val old=catalog()[incoming.id]
+                val merged=when {
+                    old==null->incoming.copy(accountEmail=account,syncState="CLOUD")
+                    old.accountEmail==account && old.syncState in setOf("CLOUD","SYNCED","CONFLICT")->mergeMovie(old,incoming)
+                    else->continue
                 }
-                if(sourceChanged) {
-                    val episodes=p.episodes.map{remote->old.episodes.firstOrNull{it.id==remote.id}?.let{remote.mergeProgress(it)}?:remote}
-                    save(p.mergeMovieTitle(old).copy(accountEmail=account,episodes=episodes,syncState="CLOUD"))
-                    continue
-                }
-                val episodes=old.episodes.map{episode->p.episodes.firstOrNull{it.id==episode.id}?.let{cloud->episode.mergeProgress(cloud)}?:episode}
-                save(old.mergeMovieTitle(p).copy(cloudId=p.cloudId,updatedAt=maxOf(old.updatedAt,p.updatedAt),episodes=episodes,
-                    message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
-                        else old.message.takeUnless{it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty()))
+                if(merged==old)continue
+                MovieRecord.validate(merged)
+                persist(merged,publish=false)
             }
+        } finally {
+            publishCatalog()
         }
-        refresh()
+    }
+    private fun mergeMovie(local:MovieRecord,remote:MovieRecord):MovieRecord {
+        val sourceChanged=local.episodes.map{it.id to it.source?.revision}!=remote.episodes.map{it.id to it.source?.revision}
+        if(sourceChanged) {
+            // A provider can be unavailable temporarily. Keep its saved URI until the user
+            // explicitly chooses to replace the local snapshot.
+            if(local.episodes.any{it.path.isNotBlank() || !it.source?.uri.isNullOrBlank()}) {
+                return local.copy(syncState="CONFLICT",message="Phụ đề trên Drive khác bản trong máy. Đã giữ nguyên video và phụ đề đang có; kiểm tra hai phiên bản trước khi thay thế.")
+            }
+            val localEpisodes=local.episodes.associateBy{it.id}
+            val episodes=remote.episodes.map{episode->localEpisodes[episode.id]?.let(episode::mergeProgress)?:episode}
+            return remote.mergeMovieTitle(local).copy(accountEmail=local.accountEmail,episodes=episodes,
+                updatedAt=maxOf(local.updatedAt,remote.updatedAt),syncState="CLOUD",
+                message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE else remote.message)
+        }
+        val remoteEpisodes=remote.episodes.associateBy{it.id}
+        val episodes=local.episodes.map{episode->remoteEpisodes[episode.id]?.let(episode::mergeProgress)?:episode}
+        val conflictResolved=local.syncState=="CONFLICT"
+        return local.mergeMovieTitle(remote).copy(cloudId=remote.cloudId,updatedAt=maxOf(local.updatedAt,remote.updatedAt),episodes=episodes,
+            syncState=if(conflictResolved)"SYNCED" else local.syncState,
+            message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
+                else local.message.takeUnless{conflictResolved || it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty())
     }
     companion object {
         private val storageLock=Any()
+        private var storageVersion=0L
         @Volatile private var instance:MovieLibrary?=null
         fun get(context:Context):MovieLibrary=instance?:synchronized(this){instance?:MovieLibrary(context.applicationContext).also{instance=it}}
         private fun playableDuration(file:File):Long {

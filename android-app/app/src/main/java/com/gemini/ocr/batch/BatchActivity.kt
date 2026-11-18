@@ -112,6 +112,11 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
     var title by rememberSaveable(selectedId) { mutableStateOf("") }
     var working by remember { mutableStateOf(false) }
     var notice by rememberSaveable { mutableStateOf("") }
+    var successNotice by rememberSaveable(selectedId) { mutableStateOf("") }
+    fun showSuccess(message: String) {
+        notice = ""
+        successNotice = message
+    }
     var orderDialog by rememberSaveable { mutableStateOf(false) }
     var confirmDialog by rememberSaveable { mutableStateOf(false) }
     var bulkApprovalDialog by rememberSaveable { mutableStateOf(false) }
@@ -140,7 +145,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
     val sourceExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { uri ->
         val id = sourceExportId; sourceExportId = ""
         if (uri != null && id.isNotBlank()) scope.launch {
-            try { videoJobs.exportSourceText(id, uri); notice = "Đã lưu SRT tiếng Trung, giữ nguyên mốc thời gian." }
+            try { videoJobs.exportSourceText(id, uri); showSuccess("Đã lưu SRT tiếng Trung, giữ nguyên mốc thời gian.") }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { notice = e.message ?: "Chưa lưu được SRT tiếng Trung." }
         }
@@ -167,7 +172,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
         scope.launch {
             try {
                 BatchEpisodeExport.save(context, videoJobs, batchId, projectId, kind, uri)
-                notice = kind.savedMessage
+                showSuccess(kind.savedMessage)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -198,7 +203,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
             scope.launch {
                 try {
                     jobs.copyMergedOutput(batchId, path, fingerprint, uri)
-                    notice = "Đã lưu MP4 cả bộ."
+                    showSuccess("Đã lưu MP4 cả bộ.")
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -246,10 +251,13 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
     val running = batch != null && busy == batch.id
     val retryProjects = videos.filter { it.id == videoBusy || it.id in parallelProjects }
     val retryWaiting = running && batch?.let { BatchWorkflowUi.retryWaiting(it, retryProjects) } == true
-    val unresolvedCues = batch?.let { BatchWorkflowUi.unresolvedCueCount(it, videos) } ?: 0
     val mergedOutput = batch?.takeIf { it.mergeEpisodes && it.state == "REVIEW" }?.outputs?.singleOrNull()
         ?.takeIf { it.episode == BatchPlan.ALL_EPISODES && it.inputFingerprint.isNotBlank() }
     val mergePending = batch?.mergeEpisodes == true && mergedOutput == null
+    val unresolvedCues = remember(step, confirmed, mergePending, batch?.items, videos) {
+        if (step == 3 && (!confirmed || mergePending) && batch != null) BatchWorkflowUi.unresolvedCueCount(batch, videos)
+        else 0
+    }
     val allApproved = step == 3 && batch?.items?.takeIf { it.isNotEmpty() }?.all { item ->
         videos.firstOrNull { it.id == item.projectId }?.let { p ->
             p.cues.isNotEmpty() && !p.sourceExtractionPending && p.cues.all { it.approved && it.translation.isNotBlank() }
@@ -285,7 +293,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
     fun action(block: suspend () -> Unit) {
         if (working) return
         scope.launch {
-            working = true; notice = ""
+            working = true; notice = ""; successNotice = ""
             try { block() }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { notice = e.message ?: "Chưa hoàn tất thao tác. Tiến độ đã lưu vẫn được giữ." }
@@ -468,6 +476,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
             Row(Modifier.widthIn(max = 1120.dp).fillMaxSize().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 LazyColumn(Modifier.weight(1f).fillMaxHeight().testTag("batch_content_list"), contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (notice.isNotBlank()) item { StatusNotice(notice, error = true) }
+                    else if (successNotice.isNotBlank()) item { StatusNotice(successNotice) }
                     if (working) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     if (busy != null && busy != selectedId) item {
                         Text("Một dự án khác đang được xử lý. Các thao tác thay đổi tạm thời được khóa.", style = MaterialTheme.typography.bodySmall)
@@ -910,7 +919,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
             val sources = jobs.validatedSources(batch.id)
             library.confirmSources(BatchLibraryTarget.movieId(batch), batch.title, sources, copySources = copyLibrarySources,
                 appendToExisting = batch.targetMovieId.isNotBlank())
-            notice = "Đã đưa vào Kho phim. Trạng thái đồng bộ hiển thị trong Kho phim."
+            showSuccess("Đã đưa vào Kho phim. Trạng thái đồng bộ hiển thị trong Kho phim.")
         } }) { Text("XÁC NHẬN ĐƯA VÀO KHO PHIM") } },
         dismissButton = { TextButton(onClick = { confirmDialog = false }) { Text("Xem lại") } })
 
@@ -931,7 +940,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
                     val sources = jobs.validatedSources(batch.id, approveAll = true)
                     library.confirmSources(BatchLibraryTarget.movieId(batch), batch.title, sources, copySources = copyLibrarySources,
                         appendToExisting = batch.targetMovieId.isNotBlank())
-                    notice = "Đã duyệt phụ đề trong bản lưu và đưa vào Kho phim."
+                    showSuccess("Đã duyệt phụ đề trong bản lưu và đưa vào Kho phim.")
                 }
             }) { Text("Duyệt và lưu") }
         },

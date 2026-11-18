@@ -113,6 +113,44 @@ class MovieSourceLibraryTest {
         library.remove(saved.id)
         assertTrue(source.isFile)
     }
+    @Test fun cloudRefreshRetainsLocalSnapshotAndPositionWhenSourceTemporarilyDisappears() = runBlocking {
+        val input=input()
+        val source=File(Uri.parse(input.project.uri).path!!)
+        val pending=File(source.parentFile,source.name+".pending")
+        val saved=library.confirmSources(UUID.randomUUID().toString(),"Keep source",listOf(input))
+        val account="keep-source@example.com"
+        VideoCloudSync.get(context).rememberVerifiedAccount(account)
+        val local=saved.copy(accountEmail=account,syncState="SYNCED",cloudId="original-manifest")
+        library.save(local)
+        val episode=local.episodes.single()
+        val snapshot=episode.source!!
+        val newCues=snapshot.cues.map{it.copy(translation=it.translation+"!")}
+        val changed=snapshot.withUpdatedCues(newCues,episode.durationMs,snapshot.revisedAt+1)
+        val remote=local.copy(cloudId="other-manifest",episodes=listOf(
+            episode.copy(path="",source=changed.copy(uri="",projectId=""))))
+
+        assertTrue(source.renameTo(pending))
+        try {
+            library.progress(local.id,episode.id,650)
+            library.mergeCloud(account,listOf(remote))
+            val retained=library.find(local.id)!!
+            assertEquals("CONFLICT",retained.syncState)
+            assertEquals("original-manifest",retained.cloudId)
+            assertEquals(episode.mediaUri,retained.episodes.single().mediaUri)
+            assertEquals(snapshot.revision,retained.episodes.single().source!!.revision)
+            assertEquals(650L,retained.episodes.single().positionMs)
+            assertEquals(retained,library.movies.value.single{it.id==local.id})
+
+            val sameSource=remote.copy(cloudId="original-manifest",episodes=listOf(
+                episode.copy(path="",source=snapshot.copy(uri="",projectId=""))))
+            library.mergeCloud(account,listOf(sameSource))
+            assertEquals("SYNCED",library.find(local.id)!!.syncState)
+            assertEquals(650L,library.find(local.id)!!.episodes.single().positionMs)
+        } finally {
+            assertTrue(pending.renameTo(source))
+        }
+        assertTrue(library.isAvailable(library.find(local.id)!!.episodes.single()))
+    }
     @Test fun portableSnapshotHidesLocalReferencesAndRejectsTimelineTampering(): Unit = runBlocking {
         val saved = library.confirmSources(UUID.randomUUID().toString(), "Portable", listOf(input()))
         val json = saved.json(portable = true)

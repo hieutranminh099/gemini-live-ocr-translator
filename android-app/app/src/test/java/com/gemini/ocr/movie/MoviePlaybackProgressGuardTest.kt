@@ -107,5 +107,27 @@ class MoviePlaybackProgressGuardTest {
         assertEquals(movie, library.find(movie.id))
     }
 
+    @Test fun localRenderedPlaybackSurvivesDriveUploadAndProgressUpdates() {
+        val episode = MovieEpisode("mp4", "Rendered", "/synthetic/clip.mp4", 10_000)
+        val project = VideoProject(episode.id, episode.title, episode.mediaUri, 9_999, 320, 180)
+        val loaded = LoadedMovie(project, 0, account, null, null, 1, episode.id,
+            null, episode.mediaUri, episode.durationMs, "")
+
+        assertTrue(loaded.canKeep(episode.copy(positionMs = 5000), "uploaded-drive-id"))
+        assertFalse(loaded.canKeep(episode.copy(path = ""), "uploaded-drive-id"))
+        assertFalse(loaded.canKeep(episode.copy(id = "next"), "uploaded-drive-id"))
+    }
+
+    @Test fun matchingLocalMediaKeepsPlayerWhenSubtitleSnapshotChanges() {
+        val episode = movie.episodes.single()
+        val source = episode.source!!.copy(uri = "file:///synthetic/original.mp4")
+        val local = episode.copy(source = source)
+        val loaded = LoadedMovie(source.project(local), 0, account, source.revision, null, 1, local.id,
+            source.sha256, local.mediaUri, local.durationMs, "")
+
+        assertTrue(loaded.canKeep(local.copy(source = source.copy(revision = "new-caption-revision")), "drive-id"))
+        assertFalse(loaded.canKeep(local.copy(source = source.copy(sha256 = "b".repeat(64))), "drive-id"))
+    }
+
     private fun sourceRevision() = movie.episodes.single().source!!.revision
 }

@@ -6,8 +6,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.json.JSONArray
 import org.json.JSONObject
@@ -340,6 +342,30 @@ class VideoApiRecoveryTest {
             assertEquals("Bán ngựa", cues[0].localDraft); assertEquals("", cues[0].translation)
             assertEquals(listOf("a", "b"), cues.map { it.id }); assertEquals(1000L, cues[0].endMs)
         } finally { VideoPolishClient.overrideResponseForTest = null }
+    }
+
+    @Test fun polishCancelsAnIdleExchangeWithoutCountingTimeBeforeDispatch() = runBlocking {
+        val cue = VideoCue("a", 0, 1000, "你好", localDraft = "Xin chào", refinementState = "pending")
+        val batch = VideoTranslationPlan.nextCloudBatch(listOf(cue), true)!!
+        val started = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val previous = VideoPolishClient.overrideResponseForTest
+        VideoPolishClient.overrideResponseForTest = {
+            started.complete(Unit)
+            try { awaitCancellation() } finally { cancelled.complete(Unit) }
+        }
+        try {
+            withTimeout(3_000) {
+                try {
+                    VideoPolishClient(inactivityMs = 100).polish("", batch, "", "") { delay(150) }
+                    fail("idle request must time out")
+                } catch (error: VideoApiException) {
+                    assertEquals("POLISH_IDLE_TIMEOUT", error.code)
+                    assertTrue(started.isCompleted)
+                    assertTrue(cancelled.isCompleted)
+                }
+            }
+        } finally { VideoPolishClient.overrideResponseForTest = previous }
     }
 
     @Test fun fencedJsonIsAcceptedWithoutExtractingJsonFromArbitraryProse() {

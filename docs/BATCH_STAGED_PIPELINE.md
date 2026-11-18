@@ -60,7 +60,7 @@ Kiểm thử phục hồi phản hồi thiếu nằm tại `VideoPartialResponse
 
 Sau một phản hồi phục hồi đầy đủ, giới hạn ID tăng gấp đôi đến tối đa 64; kết quả và giới hạn mới được lưu trong cùng checkpoint. Một lần chia xuống một câu không giữ toàn bộ phần phim còn lại ở mức một câu mỗi yêu cầu. Phản hồi thiếu tiếp theo lại giảm nhóm; ba phản hồi rỗng liên tiếp vẫn dừng để kiểm tra. Ca hồi quy khởi động ở mức một câu kiểm tra phục hồi lên 64 và không gửi lại câu đã hoàn thành/đã duyệt.
 
-Sau khi hết các lượt thử của yêu cầu hiện tại, hàng đợi chờ 1, 2 rồi 4 phút cho tối đa ba lượt tự tiếp tục. Deadline dài hơn do dịch vụ cung cấp vẫn có hiệu lực; chờ quá năm phút yêu cầu người dùng tiếp tục sau. Các lượt không tự vượt lỗi xác thực, quota ngày hoặc lỗi cần kiểm tra nội dung. Điều này giảm việc gọi dồn khi Gemini tiếp tục trả 503, không bảo đảm dịch vụ hết quá tải.
+Sau lỗi tạm thời, hàng đợi tự tiếp tục sau một phút, tối đa năm lượt, rồi tạm dừng và giữ checkpoint. Deadline dài hơn do dịch vụ cung cấp vẫn có hiệu lực. Chờ quá năm phút yêu cầu người dùng tiếp tục sau. Lỗi xác thực, quota ngày và lỗi nội dung bị chặn cần người dùng xử lý. Hiệu đính dùng giới hạn một phút chờ phản hồi cho mỗi nhóm câu, cộng dồn các lần gửi và loại thời gian chờ Live, lượt gửi hoặc hạn mức. Hết một phút chờ phản hồi cho phép tự tiếp tục ngay từ checkpoint. Lỗi nhóm hiệu đính thiếu hoặc sai định dạng giữ mã lỗi và giảm kích thước nhóm cho lượt kế tiếp.
 
 ## Tương thích dữ liệu và chỉnh sửa
 

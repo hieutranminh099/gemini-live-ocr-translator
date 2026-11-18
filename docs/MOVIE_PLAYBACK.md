@@ -15,6 +15,8 @@ Trong **Dịch hàng loạt → Thiết lập phụ đề → Lưu kết quả**
 ## Vị trí và kiểm chứng
 
 - Chuyển tập và tiến độ: `movie/MoviePlaybackActivity.kt`, `movieAdjacentEpisode`, `video/FullscreenPlayerView`.
+- Trình phát giữ phiên đang xem khi Drive cập nhật trạng thái và video đang đọc vẫn khớp. Khi đổi tập, tạm dừng hoặc thoát trình phát, yêu cầu lưu vị trí chạy ngoài vòng đời màn hình. Nếu bộ phát báo lỗi, dùng **Thử phát lại** ngay ở tập hiện tại.
+- `movie/MovieLibrary.kt` giữ danh mục đã kiểm tra trong bộ nhớ, ghi vị trí vào `movie.json` bằng `AtomicFile` và giữ nguồn cục bộ cùng phụ đề khi bản Drive khác revision. `MoviePlaybackProgressGuardTest` và `MovieSourceLibraryTest` kiểm tra các cập nhật Drive, nguồn cục bộ và vị trí xem bằng dữ liệu tổng hợp.
 - Kiểu và render: `video/VideoSubtitleStyle`, `SubtitleBackdropEffect.kt`, `TimelineBitmapOverlay`; snapshot có vùng nguồn ở `movie/MovieSource.kt`.
 - Ghép cả bộ: `batch/BatchProject.mergeEpisodes`, `BatchJobs.setMergeEpisodes`, `BatchPlan.groups`; dùng bộ ghép `VideoExporter.concatenate` hiện có.
 - JVM: `MovieEpisodeNavigationTest`, `VideoEpisodeSwipeTest`, `VideoFullscreenStateTest`, `SubtitleBackdropTest`, `MovieSourceAppearanceTest`, `BatchAutoMergeTest` và regression video/batch/movie.

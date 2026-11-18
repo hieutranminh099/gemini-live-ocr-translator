@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
 import com.gemini.ocr.SessionState
 import com.gemini.ocr.video.VideoDecoder
 import com.gemini.ocr.video.MoviePreviewControls
@@ -32,6 +31,8 @@ import com.gemini.ocr.ui.StatusNotice
 import com.gemini.ocr.video.sync.VideoCloudSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -45,7 +46,7 @@ class MoviePlaybackActivity : ComponentActivity() {
     private val playbackGeneration = AtomicLong()
     private val progressSequence = AtomicLong()
     private val progressLock = Any()
-    private var writtenProgressSequence = 0L
+    private val writtenProgressSequence = mutableMapOf<String, Long>()
     private val pendingPositions = java.util.concurrent.ConcurrentHashMap<String,Pair<Long,Long>>()
     override fun onStart() { super.onStart(); SessionState.videoActivityVisible.value = true }
     override fun onStop() { SessionState.videoActivityVisible.value = false; super.onStop() }
@@ -99,22 +100,7 @@ class MoviePlaybackActivity : ComponentActivity() {
                         (onlyLocal && next.id !in localNeighbors)) return false
                     val selection = loaded?.takeIf { it.episodeId == episodeId }
                     if (selection != null) {
-                        val observedAt = System.currentTimeMillis()
-                        pendingPositions[selection.episodeId] = observedAt to position
-                        // Persist a captured outgoing observation independently of loading the next source.
-                        // Store rejects older observations and mismatched account/source revisions.
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                if (ownsAccount(selection.accountEmail)) {
-                                    library.progress(movieId, selection.episodeId, position, observedAt,
-                                        selection.accountEmail, selection.revision)
-                                    MovieCloudSync.get(this@MoviePlaybackActivity).enqueueProgress(movieId, replace = true)
-                                }
-                            } catch (e: CancellationException) { throw e }
-                            catch (e: Exception) {
-                                withContext(Dispatchers.Main) { error = "Chưa lưu được vị trí tập trước. " + (e.message ?: "Hãy kiểm tra dung lượng máy.") }
-                            }
-                        }
+                        writeProgress(library, movieId, selection, position, flush = true)
                     }
                     playbackGeneration.incrementAndGet()
                     positionReader[0] = null
@@ -127,16 +113,25 @@ class MoviePlaybackActivity : ComponentActivity() {
                 LaunchedEffect(account.accountEmail, ownerAccount) {
                     if (ownerAccount.isNotBlank() && ownerAccount != account.accountEmail) finish()
                 }
-                LaunchedEffect(movieId, episodeId, currentEpisode?.source?.revision, currentMovie?.cloudId, loadAttempt) {
+                val sourceRevision = currentEpisode?.source?.revision
+                val mediaUri = currentEpisode?.mediaUri
+                val duration = currentEpisode?.durationMs
+                val catalogAccount = currentMovie?.accountEmail
+                val cloudId = currentMovie?.cloudId.orEmpty()
+                LaunchedEffect(movieId, episodeId, sourceRevision, mediaUri, duration, catalogAccount, cloudId, loadAttempt) {
                     val existing = loaded
                     val source = currentEpisode?.source
-                    if (existing != null && source != null && existing.episodeId == episodeId && existing.isLocal &&
-                        source.sha256 == existing.sourceHash && source.uri == existing.project.uri &&
-                        source.width == existing.project.width && source.height == existing.project.height &&
-                        currentEpisode.durationMs == existing.project.durationMs && ownsAccount(existing.accountEmail)
+                    if (existing != null && currentEpisode != null && catalogAccount != null &&
+                        ownsAccount(existing.accountEmail) && ownsAccount(catalogAccount) &&
+                        existing.canKeep(currentEpisode, cloudId)
                     ) {
-                        loaded = existing.copy(revision = source.revision, project = existing.project.copy(
-                            cues = source.cues, style = source.style, roi = source.sourceRoi, sourceMode = source.sourceMode))
+                        if (source != null && existing.revision != source.revision) {
+                            loaded = existing.copy(accountEmail = catalogAccount, revision = source.revision,
+                                project = existing.project.copy(cues = source.cues, style = source.style,
+                                    roi = source.sourceRoi, sourceMode = source.sourceMode))
+                        } else if (catalogAccount != existing.accountEmail) {
+                            loaded = existing.copy(accountEmail = catalogAccount)
+                        }
                         return@LaunchedEffect
                     }
                     val generation = playbackGeneration.incrementAndGet()
@@ -274,9 +269,13 @@ class MoviePlaybackActivity : ComponentActivity() {
                                 VideoPreview(selection.project, null, false, false, {}, {}, fullscreen, { fullscreen = it },
                                     playbackOnly = true,
                                     initialPositionMs = movieResumePosition(selection.position, selection.project.durationMs),
-                                    onPosition = { writeProgress(library, movieId, selection.episodeId, selection, it) },
+                                    onPosition = { writeProgress(library, movieId, selection, it) },
                                     dataSourceFactory = selection.factory,
-                                    onPositionFlushed = { syncFinalProgress(library, movieId, selection.episodeId, selection) },
+                                    onPositionFlushed = {
+                                        pendingPositions[selection.episodeId]?.let { (_, position) ->
+                                            writeProgress(library, movieId, selection, position, flush = true)
+                                        }
+                                    },
                                     onEpisodeSwipe = if (neighbors.isNotEmpty()) { direction, position ->
                                         adjacentEpisode(direction, position)
                                     } else null,
@@ -320,7 +319,8 @@ class MoviePlaybackActivity : ComponentActivity() {
             val local = localProject(library, record, episode)
             MoviePlaybackTrace.emit("source_ready", started)
             return LoadedMovie(local, resumePosition(episode), record?.accountEmail.orEmpty(),
-                episode?.source?.revision, null, generation, episodeId, episode?.source?.sha256)
+                episode?.source?.revision, null, generation, episodeId, episode?.source?.sha256,
+                episode?.mediaUri.orEmpty(), episode?.durationMs, "")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -328,7 +328,8 @@ class MoviePlaybackActivity : ComponentActivity() {
         }
         val cloud = MovieCloudSync.get(this).preparePlayback(movieId, episodeId)
         return LoadedMovie(cloud.project, resumePosition(cloud.episode), cloud.accountEmail,
-            cloud.episode.source?.revision, cloud.dataSourceFactory, generation, episodeId, cloud.episode.source?.sha256)
+            cloud.episode.source?.revision, cloud.dataSourceFactory, generation, episodeId, cloud.episode.source?.sha256,
+            "", cloud.episode.durationMs, requireNotNull(record).cloudId)
     }
 
     private suspend fun localProject(library: MovieLibrary, record: MovieRecord?, episode: MovieEpisode?): VideoProject {
@@ -370,32 +371,34 @@ class MoviePlaybackActivity : ComponentActivity() {
         return if(pending!=null && pending.first>=episode.positionUpdatedAt) pending.second else episode.positionMs
     }
 
-    private fun writeProgress(library: MovieLibrary, movieId: String, episodeId: String, movie: LoadedMovie, position: Long) {
+    private fun writeProgress(library: MovieLibrary, movieId: String, movie: LoadedMovie, position: Long, flush: Boolean = false) {
         if (movieId.isBlank() || movie.generation != playbackGeneration.get()) return
         val sequence = progressSequence.incrementAndGet()
         val observedAt = System.currentTimeMillis()
-        pendingPositions[episodeId] = observedAt to position
-        lifecycleScope.launch(Dispatchers.IO) {
-            synchronized(progressLock) {
-                // Reject writes queued by an old player or overtaken by a newer observation.
-                if (movie.generation != playbackGeneration.get() || sequence <= writtenProgressSequence ||
-                    !ownsAccount(movie.accountEmail)) return@synchronized
-                library.progress(movieId, episodeId, position, observedAt, movie.accountEmail, movie.revision)
-                writtenProgressSequence = sequence
+        pendingPositions[movie.episodeId] = observedAt to position
+        val app = applicationContext
+        progressScope.launch {
+            try {
+                synchronized(progressLock) {
+                    // An observation captured while leaving the player must survive Activity destruction.
+                    if ((!flush && movie.generation != playbackGeneration.get()) ||
+                        sequence <= (writtenProgressSequence[movie.episodeId] ?: 0L) || !ownsAccount(movie.accountEmail)) {
+                        return@synchronized
+                    }
+                    library.progress(movieId, movie.episodeId, position, observedAt, movie.accountEmail, movie.revision)
+                    writtenProgressSequence[movie.episodeId] = sequence
+                    if (flush) MovieCloudSync.get(app).enqueueProgress(movieId, replace = true)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("MoviePlayback", "Could not save playback progress (${e.javaClass.simpleName})")
             }
         }
     }
 
-    private fun syncFinalProgress(library: MovieLibrary, movieId: String, episodeId: String, movie: LoadedMovie) {
-        if (movieId.isBlank()) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            if (movie.generation != playbackGeneration.get() || !ownsAccount(movie.accountEmail)) return@launch
-            val record = library.find(movieId) ?: return@launch
-            val episode = record.episodes.firstOrNull { it.id == episodeId } ?: return@launch
-            if (record.accountEmail == movie.accountEmail && episode.source?.revision == movie.revision) {
-                MovieCloudSync.get(this@MoviePlaybackActivity).enqueueProgress(movieId, replace = true)
-            }
-        }
+    private companion object {
+        val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
 
@@ -406,10 +409,18 @@ internal fun movieAdjacentEpisode(movie: MovieRecord, episodeId: String, directi
     return if (index < 0) null else movie.episodes.getOrNull(index + direction)
 }
 
-private data class LoadedMovie(val project: VideoProject, val position: Long, val accountEmail: String,
+internal data class LoadedMovie(val project: VideoProject, val position: Long, val accountEmail: String,
     val revision: String?, val factory: DataSource.Factory?, val generation: Long, val episodeId: String,
-    val sourceHash: String?) {
+    val sourceHash: String?, val mediaUri: String, val catalogDuration: Long?, val cloudId: String) {
     val isLocal get() = factory == null
+
+    fun canKeep(episode: MovieEpisode, currentCloudId: String): Boolean {
+        if (episode.id != episodeId || episode.durationMs != catalogDuration) return false
+        val source = episode.source
+        if (!isLocal) return currentCloudId == cloudId && source?.revision == revision
+        if (episode.mediaUri != mediaUri || source?.sha256 != sourceHash) return false
+        return source == null || (source.width == project.width && source.height == project.height)
+    }
 }
 
 private data class PlaybackCaption(val episodeId: String, val revision: String, val cue: VideoCue,

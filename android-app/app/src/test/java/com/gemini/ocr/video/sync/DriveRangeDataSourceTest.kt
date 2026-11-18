@@ -21,6 +21,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.InetAddress
 
 /** Repeatable private HTTP fixtures; no Google login or personal video is involved. */
 @RunWith(RobolectricTestRunner::class)
@@ -39,7 +40,7 @@ class DriveRangeDataSourceTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest) = respond?.invoke(request) ?: range(request)
         }
-        server.start()
+        server.start(InetAddress.getByName("127.0.0.1"), 0)
     }
     @After fun stop() { server.shutdown() }
     private fun range(request: RecordedRequest): MockResponse {
@@ -48,7 +49,9 @@ class DriveRangeDataSourceTest {
         return MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
             .setBody(Buffer().write(bytes.copyOfRange(start, end + 1)))
     }
-    private fun source(chunk: Int = 8): DataSource = DriveRangeDataSource.Factory(OkHttpClient(), server.url("/drive/v3/"), media,
+    // Keep retries on the address MockWebServer listens on. DNS for localhost can also return ::1.
+    private fun source(chunk: Int = 8): DataSource = DriveRangeDataSource.Factory(OkHttpClient(),
+        server.url("/drive/v3/").newBuilder().host("127.0.0.1").build(), media,
         token = { rejected -> acquired += rejected; if (rejected == null) "expired-fixture-token" else "fresh-fixture-token" },
         accountGuard = { if (account != "owner") throw IOException("unsafe-provider-message") },
         chunkBytes = chunk, pause = { waits += it }).createDataSource()

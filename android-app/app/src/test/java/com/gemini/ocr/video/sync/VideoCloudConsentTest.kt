@@ -40,9 +40,11 @@ class VideoCloudConsentTest{
         context.getSharedPreferences("video-google-sync",Context.MODE_PRIVATE).edit()
             .putString("account","same@example.com").putBoolean("enabled",true).commit()
         val sync=VideoCloudSync(context)
+        val playing=sync.playbackAccountGuard("same@example.com")
         sync.rememberVerifiedAccount("same@example.com")
         assertTrue(sync.state.value.enabled)
         assertEquals("same@example.com",sync.state.value.accountEmail)
+        playing()
     }
     @Test fun logoutAndReconnectToSameAccountCannotReviveAnOldPlaybackSession(){
         val sync=VideoCloudSync(context)

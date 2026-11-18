@@ -164,6 +164,77 @@ class BatchOrchestrationTest {
         verifyPartialRetry(pauseWhileWaiting = true)
     }
 
+    @Test fun incompletePolishAutomaticallyResumesFromSavedCuesInSmallerGroups() = runBlocking {
+        verifyPolishRetry(recovering = false)
+    }
+
+    @Test fun redeliveredPolishWaitConsumesFifthAttemptThenPauses() = runBlocking {
+        verifyPolishRetry(recovering = true)
+    }
+
+    private suspend fun verifyPolishRetry(recovering: Boolean) {
+        SessionState.running.value = false
+        val store = VideoStore(context)
+        val seed = project(true)
+        val approved = seed.cues.single()
+        val polished = VideoCue("polished", 1100, 1500, "你好", "Xin chào", polishedVi = "Xin chào")
+        val pending = listOf(
+            VideoCue("first", 1600, 2000, "他来了", "Anh ấy đến rồi.", qualityFlags = listOf("LOW_OCR_CONFIDENCE")),
+            VideoCue("second", 2100, 2500, "我没走", "Tôi chưa đi.", qualityFlags = listOf("LOW_OCR_CONFIDENCE"))
+        )
+        val video = store.save(seed.copy(cues = listOf(approved, polished) + pending,
+            pipeline = seed.pipeline.record(BatchPipelineStage.CLEAN, "COMPLETE")
+                .record(BatchPipelineStage.TRANSLATE, "COMPLETE")))
+        val batchStore = BatchStore(context)
+        val b = batch(listOf(video)).copy(delivery = BatchDelivery.SOURCE_LIBRARY)
+        val start = if (recovering) b.copy(state = "RETRY_WAIT", autoRetryAttempts = 4,
+            autoRetryAtMs = System.currentTimeMillis() - 1,
+            items = b.items.map { it.copy(state = "NEEDS_REVIEW", stage = BatchPipelineStage.POLISH,
+                stageStatus = "NEEDS_REVIEW", errorCode = "POLISH_MISSING_IDS") }) else b
+        batchStore.save(start)
+        val waits = mutableListOf<Long>()
+        val jobs = BatchJobs(context, VideoJobs(context), waitBeforeRetry = { waits += it })
+        val previous = VideoPolishClient.overrideResponseForTest
+        val calls = mutableListOf<List<String>>()
+        val done = CompletableDeferred<Unit>()
+        try {
+            VideoPolishClient.overrideResponseForTest = { request ->
+                calls += request.cueIds
+                val ids = if (calls.size == 1 || recovering) emptyList() else request.cueIds
+                val rows = JSONArray(ids.map { JSONObject().put("id", it).put("translation", "Lời thoại mới.").put("needsReview", false) })
+                val content = JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
+                    JSONObject().put("translations", rows).toString())))
+                JSONObject().put("candidates", JSONArray().put(JSONObject().put("finishReason", "STOP").put("content", content))).toString()
+            }
+            if (!recovering) jobs.start(b.id)
+            jobs.execute(b.id) { done.complete(Unit) }
+            withTimeout(15_000) { done.await() }
+
+            val finalBatch = batchStore.load(b.id)
+            val finalVideo = store.load(video.id)
+            assertEquals(0L, finalBatch.autoRetryAtMs)
+            assertEquals(listOf(approved, polished), finalVideo.cues.take(2))
+            assertEquals(listOf("first", "second"), calls.first())
+            if (recovering) {
+                assertEquals(listOf(listOf("first", "second")), calls)
+                assertTrue(waits.isEmpty())
+                assertEquals(5, finalBatch.autoRetryAttempts)
+                assertEquals("PAUSED", finalBatch.state)
+                assertEquals("POLISH_MISSING_IDS", finalBatch.items.single().errorCode)
+                assertEquals(pending.map { it.translation }, finalVideo.cues.drop(2).map { it.translation })
+            } else {
+                assertEquals(listOf(listOf("first", "second"), listOf("first"), listOf("second")), calls)
+                assertEquals(listOf(60_000L), waits)
+                assertEquals("REVIEW", finalBatch.state)
+                assertEquals(0, finalBatch.autoRetryAttempts)
+                assertEquals("COMPLETE", finalVideo.pipeline.task(BatchPipelineStage.FINISH).status)
+            }
+        } finally {
+            jobs.cancel()
+            VideoPolishClient.overrideResponseForTest = previous
+        }
+    }
+
     private suspend fun verifyPartialRetry(pauseWhileWaiting: Boolean) {
         SessionState.running.value = false
         val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)

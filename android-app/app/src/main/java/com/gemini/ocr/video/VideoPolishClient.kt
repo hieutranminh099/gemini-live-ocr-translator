@@ -7,23 +7,41 @@ import com.gemini.ocr.network.StandaloneTranslator
 import com.gemini.ocr.network.singleAttemptBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.json.JSONArray
+import kotlin.time.TimeSource
 
 /** Independent text-only revision. The caller checkpoints draftVi before invoking this client. */
-internal class VideoPolishClient(private val context: Context? = null) {
+internal class VideoPolishClient(
+    private val context: Context? = null,
+    private val inactivityMs: Long = 60_000L
+) {
     suspend fun polish(apiKey: String, batch: VideoTranslationPlan.Batch, profile: String, glossary: String,
                        onRetry: suspend (Int, Long, String) -> Unit = { _, _, _ -> },
                        allowPartial: Boolean = false,
                        beforeCall: suspend () -> Unit): VideoTranslationClient.Result = withContext(Dispatchers.IO) {
         require(batch.offlineDrafts.size == batch.texts.size && batch.offlineDrafts.all { it.isNotBlank() })
+        var remainingMs = inactivityMs
+        // Accumulate only time spent waiting for a dispatched request. Capacity,
+        // Live priority, provider cooldown and key admission have their own waits.
+        suspend fun exchangeWhileActive(operation: suspend () -> String): String {
+            val started = TimeSource.Monotonic.markNow()
+            return try {
+                withTimeoutOrNull(remainingMs) { operation() }
+                    ?: throw VideoApiException("POLISH_IDLE_TIMEOUT", splitAllowed = true,
+                        detail = "Hiệu đính chưa có phản hồi sau thời gian chờ. Bản dịch nháp được giữ.")
+            } finally {
+                remainingMs -= started.elapsedNow().inWholeMilliseconds
+            }
+        }
         overrideResponseForTest?.let { override ->
             check(com.gemini.ocr.BuildConfig.DEBUG)
             beforeCall()
-            return@withContext validated(override(batch), batch, glossary, allowPartial)
+            return@withContext validated(exchangeWhileActive { override(batch) }, batch, glossary, allowPartial)
         }
         val keyReady = context?.let { AppSettings(it).hasGeminiVideoKey() } ?: apiKey.isNotBlank()
         if (!keyReady) throw VideoApiException("API_AUTH", detail = "Chưa có khóa Gemini API. Bản dịch nháp được giữ.")
@@ -31,11 +49,12 @@ internal class VideoPolishClient(private val context: Context? = null) {
         val started = System.nanoTime()
         val operation: suspend (String) -> String = { selectedKey ->
             StandaloneTranslator.beforeNetworkCallForTest?.invoke()
+            val httpClient = StandaloneTranslator.httpClientForRequest(true, true)
             val request = Request.Builder()
                 .url("https://generativelanguage.googleapis.com/v1beta/models/${StandaloneTranslator.FAST_MODEL}:generateContent")
                 .header("x-goog-api-key", selectedKey)
                 .post(singleAttemptBody(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))).build()
-            VideoApiRecovery.exchange(StandaloneTranslator.httpClientForRequest(true, true), request)
+            exchangeWhileActive { VideoApiRecovery.exchange(httpClient, request) }
         }
         val body = if (context == null) VideoApiRecovery.run(beforeCall, onRetry = onRetry) { operation(apiKey) }
             else VideoGeminiAccounts.request(context, apiKey, beforeCall, onRetry, operation)

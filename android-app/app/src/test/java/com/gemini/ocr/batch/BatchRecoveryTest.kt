@@ -1,5 +1,6 @@
 package com.gemini.ocr.batch
 
+import com.gemini.ocr.video.BatchPipelineStage
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,15 +23,26 @@ class BatchRecoveryTest {
         assertNull(BatchRecovery.nextAttemptAt(batch.copy(retryAfterMs = now + 310_000), now))
     }
 
-    @Test fun repeatedOutagesBackOffWithoutBypassingTheProviderDeadlineOrAttemptLimit() {
+    @Test fun fiveAutomaticAttemptsUseOneMinuteIntervalsAndHonorProviderDeadline() {
         val batch = project("API_SERVICE_503")
-        assertEquals(now + 60_000, BatchRecovery.nextAttemptAt(batch, now))
-        assertEquals(now + 120_000, BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 1), now))
-        assertEquals(now + 240_000, BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 2), now))
+        repeat(5) { attempt ->
+            assertEquals(now + 60_000, BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = attempt), now))
+        }
         assertEquals(now + 270_000, BatchRecovery.nextAttemptAt(
-            batch.copy(autoRetryAttempts = 2, retryAfterMs = now + 270_000), now))
-        assertNull(BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 3), now))
-        assertNull(BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 2, retryAfterMs = now + 310_000), now))
+            batch.copy(autoRetryAttempts = 4, retryAfterMs = now + 270_000), now))
+        assertNull(BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 5), now))
+        assertNull(BatchRecovery.nextAttemptAt(batch.copy(autoRetryAttempts = 4, retryAfterMs = now + 310_000), now))
+        assertTrue(BatchRecovery.exhausted(batch.copy(autoRetryAttempts = 5)))
+    }
+
+    @Test fun polishRecoveryDistinguishesIncompleteResponsesFromInFlightInactivity() {
+        for (code in listOf("POLISH_MISSING_IDS", "POLISH_TRUNCATED", "POLISH_INVALID_REVIEW_FLAGS", "TEXT_INVALID_RESPONSE", "POLISH_IDLE_TIMEOUT")) {
+            val batch = project(code)
+            val polish = batch.copy(items = batch.items.map { it.copy(stage = BatchPipelineStage.POLISH) })
+            assertNull(BatchRecovery.nextAttemptAt(batch, now))
+            assertEquals(if (code == "POLISH_IDLE_TIMEOUT") now else now + 60_000, BatchRecovery.nextAttemptAt(polish, now))
+            assertEquals(now + 100_000, BatchRecovery.nextAttemptAt(polish.copy(retryAfterMs = now + 100_000), now))
+        }
     }
 
     @Test fun noAutomaticRetryForUnclassifiedManualOrExhaustedFailures() {
@@ -40,7 +52,7 @@ class BatchRecoveryTest {
         }
         assertNull(BatchRecovery.nextAttemptAt(project("API_NETWORK", "API_AUTH"), now))
         assertNull(BatchRecovery.nextAttemptAt(project("API_NETWORK").copy(autoRetryEnabled = false), now))
-        assertNull(BatchRecovery.nextAttemptAt(project("API_NETWORK").copy(autoRetryAttempts = 3), now))
+        assertNull(BatchRecovery.nextAttemptAt(project("API_NETWORK").copy(autoRetryAttempts = 5), now))
     }
 
     @Test fun legacyDefaultsOnAndInterruptedWaitKeepsProviderDeadline() {

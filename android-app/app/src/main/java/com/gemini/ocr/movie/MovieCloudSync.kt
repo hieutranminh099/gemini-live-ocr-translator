@@ -191,12 +191,18 @@ class MovieCloudSync internal constructor(private val context:Context) {
                 if(identity.state.value.accountEmail==email)library.update(id){it.copy(message=message)}
             }
             if(identity.state.value.accountEmail!=email)return@withLock true
-            val current=library.find(id)?:return@withLock true
-            if(current.titleUpdatedAt!=uploading.titleUpdatedAt || current.episodes.map{it.id to it.source?.revision}!=uploading.episodes.map{it.id to it.source?.revision}) {
-                library.update(id){it.copy(syncState="QUEUED",message="Có phụ đề mới đã lưu; đang chờ đồng bộ phiên bản mới.")}
-                return@withLock false
+            val saved=library.update(id){current->
+                if(current.titleUpdatedAt!=uploading.titleUpdatedAt ||
+                    current.episodes.map{it.id to it.source?.revision}!=uploading.episodes.map{it.id to it.source?.revision}) {
+                    current.copy(syncState="QUEUED",message="Có thay đổi mới đã lưu; đang chờ đồng bộ phiên bản mới.")
+                } else current.copy(syncState="SYNCED",cloudId=cloudId,message="Đã đồng bộ và xác minh thành công.")
+            }?:return@withLock true
+            if(saved.syncState!="SYNCED")return@withLock false
+            if(saved.updatedAt>uploading.updatedAt) {
+                // Playback can continue while the first upload is running and there is no
+                // cloud ID to enqueue progress against yet.
+                enqueueProgress(id)
             }
-            library.update(id){it.copy(syncState="SYNCED",cloudId=cloudId,message="Đã đồng bộ và xác minh thành công.")}
             true
         } catch(e:CancellationException) {
             library.update(id){it.copy(syncState="QUEUED",message="Đồng bộ đã tạm dừng; bản trong máy được giữ.")};throw e

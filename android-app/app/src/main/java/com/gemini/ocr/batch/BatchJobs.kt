@@ -475,7 +475,7 @@ class BatchJobs internal constructor(
             suspend fun processPass(automatic: Boolean) {
                 val manualIds = if (automatic) batch.items.filter {
                     (it.stageStatus == "NEEDS_REVIEW" || it.state in setOf("FAILED", "NEEDS_REVIEW")) &&
-                        !BatchRecovery.canRetry(it.errorCode)
+                        !BatchRecovery.canRetry(it)
                 }.mapTo(mutableSetOf()) { it.projectId } else emptySet()
                 // Reconcile lazily per episode; one damaged source cannot block every input.
                 suspend fun reconcile(item: BatchItem) {
@@ -684,14 +684,23 @@ class BatchJobs internal constructor(
                     message = if (allReady) "Đã hoàn tất. Xem từng kết quả rồi xác nhận đưa vào Kho phim; chưa tự tải cloud."
                     else "Có video hoặc nhóm ghép chưa hoàn tất. Kết quả đã xong được giữ; bấm thử lại. ${mergeErrors.joinToString("; ")}"))
             }
+            suspend fun continueAutomatically(waitMs: Long) {
+                if (waitMs > 0) waitBeforeRetry(waitMs)
+                gate()
+                batch = persist(batch.copy(state = "RUNNING", autoRetryAtMs = 0,
+                    autoRetryAttempts = batch.autoRetryAttempts + 1,
+                    message = "Đang tự tiếp tục phần còn thiếu. Lượt ${batch.autoRetryAttempts + 1}/${BatchRecovery.MAX_ATTEMPTS}."))
+            }
             try {
                 batch = store.load(id); loaded = true
                 if (stopRequested) throw CancellationException("Stopped before service started")
                 var automatic = recovering
                 if (recovering) {
-                    val deadline = maxOf(batch.autoRetryAtMs, batch.retryAfterMs)
-                    if (deadline > System.currentTimeMillis()) {
-                        waitBeforeRetry(deadline - System.currentTimeMillis())
+                    val remaining = maxOf(batch.autoRetryAtMs, batch.retryAfterMs) - System.currentTimeMillis()
+                    if (batch.state == "RETRY_WAIT" && batch.autoRetryAtMs > 0) {
+                        continueAutomatically(remaining)
+                    } else if (remaining > 0) {
+                        waitBeforeRetry(remaining)
                         gate()
                     }
                 }
@@ -703,18 +712,15 @@ class BatchJobs internal constructor(
                         val deadline = BatchRecovery.nextAttemptAt(batch, now) ?: break
                         batch = persist(batch.copy(state = "RETRY_WAIT", autoRetryAtMs = deadline,
                             message = "Đã lưu tiến độ. Sẽ tự tiếp tục phần còn thiếu khi hết thời gian chờ."))
-                        waitBeforeRetry(deadline - now)
-                        gate()
-                        batch = persist(batch.copy(state = "RUNNING", autoRetryAtMs = 0,
-                            autoRetryAttempts = batch.autoRetryAttempts + 1, message = "Đang tự tiếp tục phần còn thiếu."))
+                        continueAutomatically(deadline - now)
                         automatic = true
                     }
                 }
                 if (batch.state == "REVIEW" && batch.autoRetryAttempts > 0) {
                     batch = persist(batch.copy(autoRetryAttempts = 0))
-                } else if (batch.autoRetryAttempts >= BatchRecovery.MAX_ATTEMPTS &&
-                    batch.items.any { it.stageStatus == "NEEDS_REVIEW" && BatchRecovery.canRetry(it.errorCode) }) {
-                    batch = persist(batch.copy(message = "Đã tự thử lại ${BatchRecovery.MAX_ATTEMPTS} lượt. Kiểm tra chỉ dẫn ở tập chưa xong rồi bấm Tiếp tục."))
+                } else if (BatchRecovery.exhausted(batch)) {
+                    batch = persist(batch.copy(state = "PAUSED", autoRetryAtMs = 0,
+                        message = "Đã tạm dừng sau ${BatchRecovery.MAX_ATTEMPTS} lượt tự tiếp tục. Tiến độ đã lưu. Kiểm tra tập chưa xong rồi bấm Tiếp tục."))
                 }
             } catch (e: CancellationException) {
                 withContext(NonCancellable) {

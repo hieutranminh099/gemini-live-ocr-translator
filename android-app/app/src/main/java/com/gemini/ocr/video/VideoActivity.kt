@@ -1018,7 +1018,9 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
                 }
             }
             override fun onPlayerError(error: PlaybackException) {
-                if(attached)playerError = if (dataSourceFactory != null)
+                if (!attached) return
+                if (playbackOnly) positionReporter.flush(player.currentPosition.coerceAtLeast(0))
+                playerError = if (dataSourceFactory != null)
                     generateSequence<Throwable>(error) { it.cause }.take(8)
                         .filterIsInstance<DrivePlaybackException>().firstOrNull()?.failure?.message
                         ?: "Chưa phát được phim trên Drive. Kiểm tra mạng và tài khoản Google rồi thử lại."
@@ -1181,9 +1183,9 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         Text("${videoTime(scrubPosition ?: position)} / ${videoTime(project.durationMs)}", style = MaterialTheme.typography.bodySmall)
     }
     val previewError=playerError.ifBlank{subtitleError}
-    if (previewError.isNotBlank() && (!fullscreen || dataSourceFactory != null)) {
+    if (previewError.isNotBlank() && (!fullscreen || playbackOnly || dataSourceFactory != null)) {
         Text(previewError, color = MaterialTheme.colorScheme.error)
-        if (dataSourceFactory != null && playerError.isNotBlank()) TextButton(onClick = {
+        if ((playbackOnly || dataSourceFactory != null) && playerError.isNotBlank()) TextButton(onClick = {
             playerError = ""
             effectEpochMs.set(player.currentPosition.coerceAtLeast(0))
             player.prepare()

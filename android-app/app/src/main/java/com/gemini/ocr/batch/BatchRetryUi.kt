@@ -32,7 +32,7 @@ internal fun BatchAutoRetrySetting(enabled: Boolean, editable: Boolean, onChange
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Tự tiếp tục khi gặp lỗi tạm thời", style = MaterialTheme.typography.titleSmall)
-            Text("Thử lại phần còn thiếu sau 1, 2 rồi 4 phút, tối đa 3 lượt; chờ lâu hơn nếu Gemini yêu cầu. Lỗi cần chỉnh tay sẽ dừng để bạn kiểm tra.",
+            Text("Tự tiếp tục phần còn thiếu sau 1 phút, tối đa 5 lượt. Nếu Gemini yêu cầu chờ, ứng dụng giữ thời gian chờ đó.",
                 style = MaterialTheme.typography.bodySmall)
         }
         Switch(checked = enabled, onCheckedChange = onChange, enabled = editable,
@@ -146,6 +146,10 @@ internal fun batchRetryGuidance(item: BatchItem, project: VideoProject?): BatchR
                 "Tiến độ đã lưu. Mở Xem và sửa phụ đề để kiểm tra phần chưa xong. Lượt tiếp tục dùng nhóm câu nhỏ có giới hạn phục hồi."
         code == "TEXT_EMPTY_RESPONSE" ->
             "Gemini chưa trả bản dịch cho phần còn thiếu" to "Đã thử nhóm nhỏ hơn ba lần. Mở Xem và sửa phụ đề để kiểm tra nguồn, rồi bấm Tiếp tục khi sẵn sàng."
+        code == "POLISH_IDLE_TIMEOUT" ->
+            "Gemini chưa phản hồi hiệu đính" to "Các câu đã hiệu đính và bản nháp vẫn được giữ. Lượt tiếp tục chỉ gửi phần còn thiếu."
+        item.stage == BatchPipelineStage.POLISH && BatchRecovery.canRetryPolishResponse(code) ->
+            "Phản hồi hiệu đính chưa đầy đủ hoặc không hợp lệ" to "Tiếp tục hiệu đính theo nhóm nhỏ hơn; các câu đã hoàn thành được giữ."
         code == "TEXT_INCOMPLETE_RESPONSE" || code == "TEXT_TRUNCATED" || code == "RESPONSE_NEEDS_REVIEW" ->
             "Một số nhóm câu chưa có kết quả đầy đủ" to "Mở Xem và sửa phụ đề để xem câu còn thiếu. Bấm Tiếp tục để xử lý phần còn lại."
         item.stage == BatchPipelineStage.POLISH ->

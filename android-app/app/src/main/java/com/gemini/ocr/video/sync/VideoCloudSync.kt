@@ -155,8 +155,8 @@ class VideoCloudSync internal constructor(
     }
     internal fun rememberVerifiedAccount(email:String){
         require(email.length in 3..320 && email.contains('@'))
-        playbackGeneration.incrementAndGet()
         if(state.value.accountEmail!=email){
+            playbackGeneration.incrementAndGet()
             WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
             WorkManager.getInstance(context).cancelAllWorkByTag(MovieCloudSync.TAG)
             // Choosing another account never authorizes uploading this device's projects to it.
