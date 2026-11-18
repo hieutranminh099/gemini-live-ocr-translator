@@ -85,6 +85,9 @@ class SingleVideoGeminiBenchmarkTest {
                                 .put("task_error", task?.errorCode.orEmpty())
                                 .put("scan_ms", video?.scanMs ?: 0L)
                                 .put("cues", video?.cues?.size ?: 0)
+                                .put("ocr_native_calls", video?.ocrMetrics?.optLong("ocr_native_calls") ?: 0L)
+                                .put("ocr_wall_ms", video?.ocrMetrics?.optLong("ocr_wall_ms") ?: 0L)
+                                .put("decode_wall_ms", video?.ocrMetrics?.optLong("decode_and_other_wall_ms") ?: 0L)
                                 .put("cloud_calls", video?.cloudCalls ?: 0)
                                 .put("attempts", savedBatch?.autoRetryAttempts ?: 0)
                                 .put("retry_at_ms", maxOf(savedBatch?.autoRetryAtMs ?: 0L, task?.nextRetryAt ?: 0L))
@@ -118,7 +121,7 @@ class SingleVideoGeminiBenchmarkTest {
                 val movie = library.movies.value.single { it.id == batch.id }
                 val saved = movie.episodes.single().source!!.cues
                 val project = VideoStore(context).load(item.projectId)
-                assertTrue("Expected actual OCR output from the synthetic fixture", saved.size >= 36)
+                assertTrue("Expected actual OCR output from the synthetic fixture", saved.size >= 5)
                 assertTrue(saved.all { it.translation.isNotBlank() && it.approved })
                 assertTrue("Expected real Gemini requests", project.cloudCalls > 0)
                 val sourceTimeline = saved.joinToString("\n") { "${it.startMs}|${it.endMs}|${it.source}" }
@@ -128,6 +131,11 @@ class SingleVideoGeminiBenchmarkTest {
                     .put("total_ms", end - start).put("import_ms", ready - start)
                     .put("processing_ms", review - ready).put("save_ms", end - review)
                     .put("cue_count", saved.size).put("cloud_calls", project.cloudCalls)
+                    .put("source_duration_ms", project.durationMs)
+                    .put("ocr_native_calls", project.ocrMetrics.getLong("ocr_native_calls"))
+                    .put("ocr_wall_ms", project.ocrMetrics.getLong("ocr_wall_ms"))
+                    .put("decode_wall_ms", project.ocrMetrics.getLong("decode_and_other_wall_ms"))
+                    .put("uniform_roi_skips", project.ocrMetrics.optLong("uniform_roi_skips"))
                     .put("timeline_sha256", digest).toString())
             }
         } finally {

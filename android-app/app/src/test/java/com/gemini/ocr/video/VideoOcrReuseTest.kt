@@ -6,6 +6,11 @@ import java.nio.ByteBuffer
 
 class VideoOcrReuseTest {
     private fun frame(ms:Long, bytes:ByteArray=byteArrayOf(1,2,3,4))=VideoOcrFrame(ms,2,2,bytes)
+    @Test fun uniformRoiRequiresEveryPixelToMatch() {
+        assertTrue(frame(0, byteArrayOf(125, 125, 125, 125)).isUniform())
+        assertFalse(frame(0, byteArrayOf(125, 125, 125, 124)).isUniform())
+        assertFalse(frame(0, byteArrayOf(124, 125, 125, 125)).isUniform())
+    }
     @Test fun exactUnchangedPixelsReuseButQuorumStillRequiresIndependentObservations() {
         val reuse=VideoOcrReuse<String>();reuse.record(frame(0),"不是三个\n快走")
         assertNull(reuse.lookup(frame(50),true))

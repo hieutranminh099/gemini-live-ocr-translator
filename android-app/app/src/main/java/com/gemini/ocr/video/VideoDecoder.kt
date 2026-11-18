@@ -127,6 +127,7 @@ object VideoDecoder {
         var recognitionRequests=priorMetrics.optLong("recognition_requests")
         var refinementRequests=priorMetrics.optLong("refinement_requests")
         var nativeCalls=priorMetrics.optLong("ocr_native_calls")
+        var uniformRoiSkips=priorMetrics.optLong("uniform_roi_skips")
         var upscaledRequests=priorMetrics.optLong("upscaled_requests")
         var uncertainObservations=priorMetrics.optLong("uncertain_observations")
         var multilineObservations=priorMetrics.optLong("multiline_observations")
@@ -150,6 +151,7 @@ object VideoDecoder {
                 .put("video_raw_drafts",videoDrafts)
                 .put("recognition_requests",recognitionRequests).put("refinement_requests",refinementRequests)
                 .put("ocr_native_calls",nativeCalls).put("upscaled_requests",upscaledRequests)
+                .put("uniform_roi_skips",uniformRoiSkips)
                 .put("uncertain_observations",uncertainObservations).put("multiline_observations",multilineObservations)
                 .put("exact_pixel_reused_observations",priorMetrics.optLong("exact_pixel_reused_observations")+reusedObservations)
                 .put("consolidated_ocr_variants", draftTimeline?.consolidatedVariants ?: 0)
@@ -160,9 +162,15 @@ object VideoDecoder {
                 .put("stable_sample_interval_ms",200).put("confirmation_sample_interval_ms",65)
         }
         fun carry(sourceMs:Long)=acc.snapshot().also{if(videoDrafts)it.put("draftQuality",quality.snapshot(it.optString("source")))}.put("metrics",metrics(sourceMs))
-        suspend fun recognize(frame:VideoOcrFrame,refinement:Boolean=false):VideoOcrReading? {
+        suspend fun recognize(frame:VideoOcrFrame,refinement:Boolean=false,forceNative:Boolean=false):VideoOcrReading? {
             currentCoroutineContext().ensureActive()
             recognitionRequests++;if(refinement)refinementRequests++
+            // A completely uniform luma image has no glyphs. Keep its timestamp as a blank
+            // observation so it can close an occurrence and confirm a subtitle disappeared.
+            if (videoDrafts && !forceNative && frame.isUniform()) {
+                uniformRoiSkips++
+                return VideoOcrReading("")
+            }
             val prepareAt=SystemClock.elapsedRealtime()
             val bitmap=bitmapBuffer?.bitmap(frame) ?: frame.bitmap()
             bitmapMs+=SystemClock.elapsedRealtime()-prepareAt
@@ -286,7 +294,7 @@ object VideoDecoder {
                 val finalFrame=tail?.frame
                 finalFrame?.takeIf{it.ms>lastEmitted}?.let{frame->
                     gate()
-                    accept(frame, recognize(frame), fromNative = true)
+                    accept(frame, recognize(frame, forceNative = true), fromNative = true)
                 }
                 if(finalFrame!=null)draftTimeline.finishAtValidatedEnd(project.durationMs,finalFrame.ms)
                 else acc.finish(project.durationMs)

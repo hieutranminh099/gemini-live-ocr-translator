@@ -6,6 +6,12 @@ import java.nio.ByteBuffer
 /** A retained ROI sample is luma only; Android/ML Kit receives a bitmap only when OCR is due. */
 internal data class VideoOcrFrame(val ms:Long,val width:Int,val height:Int,val luma:ByteArray) {
     init { require(width>0 && height>0 && luma.size==width*height) }
+    fun isUniform(): Boolean {
+        val first = luma[0]
+        for (index in 1 until luma.size) if (luma[index] != first) return false
+        return true
+    }
+
     fun bitmap():Bitmap {
         val pixels=IntArray(luma.size)
         writePixels(pixels)

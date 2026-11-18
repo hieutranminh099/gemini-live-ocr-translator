@@ -74,7 +74,7 @@ jobs:
           sudo chmod a+rw /dev/kvm
       - name: Verify the shared benchmark clip
         run: |
-          echo '86d3219ce53419eba7db1f3ff8e5e3e88b222979448030f4c649c3b9ed30bbbd  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
+          echo '333caae67757141123c37515fea062892d5e9f0815f8bea3e55642699789f727  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
       - name: Build isolated baseline and candidate APKs
         run: |
           set -euo pipefail
