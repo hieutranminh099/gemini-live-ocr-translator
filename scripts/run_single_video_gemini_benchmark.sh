@@ -5,10 +5,11 @@ baseline=$1
 candidate=$2
 results=$3
 fixture=$4
+: "${GEMINI_BENCHMARK_API_KEY:?Missing benchmark credential}"
 mkdir -p "$results"
 
 run_variant() {
-  local checkout=$1 variant=$2 run=$3
+  local variant=$1 run=$2
   local package="com.gemini.ocr.$variant"
   local test_package="$package.test"
   adb shell am force-stop "$package"
@@ -29,6 +30,9 @@ run_variant() {
     return 1
   fi
   adb exec-out run-as "$package" cat files/benchmark-result.json > "$results/$variant-$run.json"
+  printf '%s run %s completed\n' "$variant" "$run"
+  cat "$results/$variant-$run.json"
+  printf '\n'
   adb shell pm clear "$package" > /dev/null
   sleep 20
 }
@@ -42,11 +46,11 @@ done
 trap 'adb shell pm clear com.gemini.ocr.perfbase >/dev/null 2>&1 || true; adb shell pm clear com.gemini.ocr.perfnext >/dev/null 2>&1 || true' EXIT
 for run in 1 2 3; do
   if [[ "$run" == 2 ]]; then
-    run_variant "$candidate" perfnext "$run"
-    run_variant "$baseline" perfbase "$run"
+    run_variant perfnext "$run"
+    run_variant perfbase "$run"
   else
-    run_variant "$baseline" perfbase "$run"
-    run_variant "$candidate" perfnext "$run"
+    run_variant perfbase "$run"
+    run_variant perfnext "$run"
   fi
 done
 

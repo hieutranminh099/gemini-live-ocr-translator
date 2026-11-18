@@ -32,7 +32,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Prepare Android environment and sample video
+      - name: Find or install Android command-line tools
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
@@ -55,18 +56,20 @@ jobs:
             mv "$RUNNER_TEMP/android-cli/cmdline-tools" "$sdk_root/cmdline-tools/benchmark"
             cli="$sdk_root/cmdline-tools/benchmark/bin"
           fi
-          "$cli/sdkmanager" --sdk_root="$sdk_root" --licenses < <(yes)
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\nANDROID_BENCHMARK_CLI=%s\n' "$sdk_root" "$sdk_root" "$cli" >> "$GITHUB_ENV"
+      - name: Install Android SDK and system image
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          "$ANDROID_BENCHMARK_CLI/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses < <(yes)
           image='system-images;android-34;google_apis;x86_64'
-          "$cli/sdkmanager" --sdk_root="$sdk_root" --install 'platform-tools' 'emulator' 'platforms;android-35' 'build-tools;35.0.0' "$image"
-          "$cli/avdmanager" create avd --name gemini-benchmark --package "$image" <<< no
-          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk_root" "$sdk_root" >> "$GITHUB_ENV"
-          printf '%s\n' "$sdk_root/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_BENCHMARK_CLI/sdkmanager" --sdk_root="$ANDROID_HOME" --install 'platform-tools' 'emulator' 'platforms;android-35' 'build-tools;35.0.0' "$image"
+          "$ANDROID_BENCHMARK_CLI/avdmanager" create avd --name gemini-benchmark --package "$image" <<< no
+          printf '%s\n' "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           sudo chmod a+rw /dev/kvm
-          if ! command -v ffmpeg >/dev/null || ! fc-list :lang=zh | grep -F 'Noto Sans CJK SC' >/dev/null; then
-            sudo apt-get -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update
-            sudo apt-get -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install ffmpeg fonts-noto-cjk
-          fi
-          python3 scripts/generate_single_video_ocr_fixture.py "$RUNNER_TEMP/video/benchmark.mp4"
+      - name: Verify the shared benchmark clip
+        run: |
+          echo '86d3219ce53419eba7db1f3ff8e5e3e88b222979448030f4c649c3b9ed30bbbd  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
       - name: Build isolated baseline and candidate APKs
         run: |
           set -euo pipefail
@@ -92,7 +95,7 @@ jobs:
         env:
           GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: |
-          bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$RUNNER_TEMP/video/benchmark.mp4"
+          bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$GITHUB_WORKSPACE/scripts/fixtures/single-video-ocr-benchmark.mp4"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
