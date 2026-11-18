@@ -20,17 +20,52 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Check benchmark secret
+        env:
+          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_BENCHMARK_API_KEY" ]; then
+            echo 'Add GEMINI_BENCHMARK_API_KEY as a repository Actions secret, then rerun.' >&2
+            exit 1
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - name: Prepare Android environment and sample video
         run: |
-          sudo apt-get -qq update
-          sudo apt-get -qq install ffmpeg fonts-noto-cjk
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [[ ! -w "$sdk_root" ]]; then sdk_root="$RUNNER_TEMP/android-sdk"; fi
+          mkdir -p "$sdk_root"
+          export ANDROID_HOME="$sdk_root" ANDROID_SDK_ROOT="$sdk_root"
+          cli="$sdk_root/cmdline-tools/latest/bin"
+          if [[ ! -x "$cli/sdkmanager" ]]; then
+            for installed in "$sdk_root"/cmdline-tools/*/bin; do
+              if [[ -x "$installed/sdkmanager" ]]; then cli="$installed"; break; fi
+            done
+          fi
+          if [[ ! -x "$cli/sdkmanager" ]]; then
+            archive="$RUNNER_TEMP/android-cli.zip"
+            curl -fsSL --retry 3 --max-time 180 \
+              https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip -o "$archive"
+            echo "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee  $archive" | sha256sum --check
+            unzip -q "$archive" -d "$RUNNER_TEMP/android-cli"
+            mkdir -p "$sdk_root/cmdline-tools"
+            mv "$RUNNER_TEMP/android-cli/cmdline-tools" "$sdk_root/cmdline-tools/benchmark"
+            cli="$sdk_root/cmdline-tools/benchmark/bin"
+          fi
+          "$cli/sdkmanager" --sdk_root="$sdk_root" --licenses < <(yes)
+          image='system-images;android-34;google_apis;x86_64'
+          "$cli/sdkmanager" --sdk_root="$sdk_root" --install 'platform-tools' 'emulator' 'platforms;android-35' 'build-tools;35.0.0' "$image"
+          "$cli/avdmanager" create avd --name gemini-benchmark --package "$image" <<< no
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk_root" "$sdk_root" >> "$GITHUB_ENV"
+          printf '%s\n' "$sdk_root/platform-tools" >> "$GITHUB_PATH"
           sudo chmod a+rw /dev/kvm
-          echo 'no' | sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'system-images;android-34;google_apis;x86_64'
-          echo 'no' | avdmanager create avd --name gemini-benchmark --package 'system-images;android-34;google_apis;x86_64'
+          if ! command -v ffmpeg >/dev/null || ! fc-list :lang=zh | grep -F 'Noto Sans CJK SC' >/dev/null; then
+            sudo apt-get -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update
+            sudo apt-get -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install ffmpeg fonts-noto-cjk
+          fi
           python3 scripts/generate_single_video_ocr_fixture.py "$RUNNER_TEMP/video/benchmark.mp4"
       - name: Build isolated baseline and candidate APKs
         run: |
@@ -46,18 +81,17 @@ jobs:
           (cd android-app && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId=com.gemini.ocr.perfnext)
       - name: Start one Android emulator
         run: |
-          "$ANDROID_HOME/emulator/emulator" -avd gemini-benchmark -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -cores 2 -memory 2048 > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          timeout 180 adb wait-for-device
-          timeout 180 bash -c 'until [[ $(adb shell getprop sys.boot_completed | tr -d "\r") == 1 ]]; do sleep 3; done'
+          set -euo pipefail
+          emulator_log="$RUNNER_TEMP/emulator.log"
+          trap 'tail -80 "$emulator_log"' ERR
+          "$ANDROID_HOME/emulator/emulator" -avd gemini-benchmark -accel on -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -cores 2 -memory 2048 > "$emulator_log" 2>&1 &
+          timeout 240 adb wait-for-device
+          timeout 240 bash -c 'until [[ $(adb shell getprop sys.boot_completed | tr -d "\r") == 1 ]]; do sleep 3; done'
           adb shell input keyevent 82
       - name: Measure baseline and candidate with native OCR and Gemini
         env:
           GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: |
-          if [ -z "$GEMINI_BENCHMARK_API_KEY" ]; then
-            echo 'The build and emulator checks passed. Add GEMINI_BENCHMARK_API_KEY as a repository Actions secret, then rerun.' >&2
-            exit 1
-          fi
           bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$RUNNER_TEMP/video/benchmark.mp4"
       - uses: actions/upload-artifact@v4
         if: always()
