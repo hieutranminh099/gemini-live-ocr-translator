@@ -25,6 +25,7 @@ import com.gemini.ocr.video.VideoStore
 import com.gemini.ocr.video.VideoTranslationMode
 import com.gemini.ocr.video.VideoTranslationPlan
 import com.gemini.ocr.video.VideoHybridWorkflow
+import com.gemini.ocr.movie.MovieLibrary
 import com.gemini.ocr.movie.MovieSourceInput
 import com.gemini.ocr.video.preferredVideoTextTrack
 import com.gemini.ocr.video.withOfflinePolishPolicy
@@ -322,6 +323,25 @@ class BatchJobs internal constructor(
     suspend fun remove(id: String, projectId: String) = edit(id) {
         // Removing an input never deletes its source, project/checkpoint or already-confirmed movie.
         it.copy(items = it.items.filterNot { item -> item.projectId == projectId }, outputs = emptyList(), state = "READY")
+    }
+
+    internal suspend fun deleteDraft(id: String) = withContext(Dispatchers.IO) {
+        val library = MovieLibrary.get(context)
+        library.operation.withLock {
+            edits.withLock {
+                synchronized(this@BatchJobs) {
+                    check(busy.value != id) { "Tạm dừng dự án này trước khi xóa." }
+                    val batch = store.load(id)
+                    require(!BatchLibraryTarget.saved(batch, library.all())) {
+                        "Dự án đã lưu vào Kho phim."
+                    }
+                    synchronized(writes) {
+                        store.deleteDraft(id)
+                        refresh()
+                    }
+                }
+            }
+        }
     }
 
     suspend fun setExecutionMode(id: String, mode: BatchExecutionMode) = edit(id) {

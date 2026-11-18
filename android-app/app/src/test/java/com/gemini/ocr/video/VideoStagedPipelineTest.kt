@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.gemini.ocr.SessionState
 import com.gemini.ocr.batch.*
+import com.gemini.ocr.network.StandaloneTranslator
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
@@ -57,6 +58,75 @@ class VideoStagedPipelineTest {
         assertFalse(UnavailableChineseAsr.available);assertNull(UnavailableChineseAsr.recognize(project(),0,100))
         assertEquals(approved.source,VideoStagedPipeline.clean(listOf(approved)).single().source)
         assertEquals("Đã duyệt",VideoStagedPipeline.clean(listOf(approved)).single().translation)
+    }
+    @Test fun geminiOcrPolishSkipsTimingOnlyButKeepsIndependentQualityChecks() {
+        val short = VideoStagedPipeline.clean(listOf(
+            cue(source = "你好").copy(endMs = 350, translation = "Xin chào", origin = "OCR")
+        )).single()
+        assertEquals(setOf("SHORT_SUBTITLE", "ASR_UNAVAILABLE"), short.qualityFlags.toSet())
+        val p = project(listOf(short)).copy(sourceMode = VideoSourceMode.OCR)
+        assertFalse(VideoStagedPipeline.needsPolish(p, short))
+        assertFalse(VideoStagedPipeline.needsPolish(p, short.copy(origin = "SUBTITLE")))
+        assertTrue(VideoStagedPipeline.needsPolish(p, short.copy(origin = "ASR")))
+        assertTrue(VideoStagedPipeline.needsPolish(p, short.copy(qualityFlags = short.qualityFlags + "LOW_OCR_CONFIDENCE")))
+        assertTrue(VideoStagedPipeline.needsPolish(p, short.copy(translation = "a".repeat(47))))
+        assertTrue(VideoStagedPipeline.needsPolish(p, short.copy(error = "Check wording")))
+        assertFalse(VideoStagedPipeline.needsPolish(p, short.copy(approved = true, error = "Check wording")))
+        assertFalse(VideoStagedPipeline.needsPolish(p, short.copy(model = "user-edited", error = "Check wording")))
+        assertTrue(VideoStagedPipeline.needsPolish(p.copy(translationMode = VideoTranslationMode.OFFLINE), short))
+        assertTrue(VideoStagedPipeline.needsPolish(p.copy(sourceMode = VideoSourceMode.SIDECAR),
+            short.copy(origin = "SUBTITLE")))
+        assertFalse(VideoStagedPipeline.needsPolish(p.copy(sourceMode = VideoSourceMode.AUTO), short))
+    }
+
+    @Test fun geminiOcrPolishWorkerSendsOnlyCuesWithIndependentQualityIssues() = runBlocking {
+        val timingOnly = List(30) { index ->
+            VideoCue("short-$index", 300L * index, 300L * index + 250, "你好", "Chào bạn",
+                origin = "OCR", draftVi = "Chào bạn", qualityFlags = listOf("SHORT_SUBTITLE", "ASR_UNAVAILABLE"))
+        }
+        val uncertain = timingOnly.take(2).mapIndexed { index, cue ->
+            cue.copy(id = "uncertain-$index", startMs = 9000 + 300L * index, endMs = 9250 + 300L * index,
+                qualityFlags = cue.qualityFlags + "LOW_OCR_CONFIDENCE")
+        }
+        val edited = uncertain.last().copy(id = "edited", startMs = 9600, endMs = 9850, model = "user-edited")
+        val rows = timingOnly + uncertain + edited
+        val original = project(rows).copy(sourceMode = VideoSourceMode.OCR, durationMs = 10_000, scanMs = 10_000,
+            pipeline = VideoPipelineCheckpoint().record(BatchPipelineStage.EXTRACT, "COMPLETE", 10_000)
+                .record(BatchPipelineStage.CLEAN, "COMPLETE", rows.size.toLong())
+                .record(BatchPipelineStage.TRANSLATE, "COMPLETE", rows.size.toLong()))
+        val store = VideoStore(context)
+        store.save(original)
+        val jobs = VideoJobs(context)
+        val owner = UUID.randomUUID().toString()
+        val previousLive = SessionState.running.value
+        val previousNetwork = StandaloneTranslator.beforeNetworkCallForTest
+        val previousResponse = VideoPolishClient.overrideResponseForTest
+        val sent = mutableListOf<List<String>>()
+        jobs.reserveBatch(owner)
+        try {
+            SessionState.running.value = false
+            StandaloneTranslator.beforeNetworkCallForTest = { error("Unexpected external request") }
+            VideoPolishClient.overrideResponseForTest = { batch ->
+                sent.add(batch.cueIds)
+                response(batch.cueIds)
+            }
+            val saved = withTimeout(15_000) { jobs.runStageForBatch(owner, original.id, BatchPipelineStage.POLISH) }
+            assertEquals("COMPLETE", saved.pipeline.task(BatchPipelineStage.POLISH).status)
+            assertEquals(listOf(uncertain.map { it.id }), sent)
+            assertEquals(timingOnly, saved.cues.take(timingOnly.size))
+            assertEquals(edited, saved.cues.last())
+            assertEquals(rows.map { Triple(it.id, it.startMs, it.endMs) },
+                saved.cues.map { Triple(it.id, it.startMs, it.endMs) })
+            val finished = withTimeout(15_000) { jobs.runStageForBatch(owner, original.id, BatchPipelineStage.FINISH) }
+            assertTrue(VideoStagedPipeline.completed(finished, BatchPipelineStage.FINISH))
+            assertTrue(store.exportFile(original.id, "srt").readText().contains(
+                "00:00:00,000 --> 00:00:00,250\nChào bạn"))
+        } finally {
+            jobs.releaseBatch(owner)
+            SessionState.running.value = previousLive
+            StandaloneTranslator.beforeNetworkCallForTest = previousNetwork
+            VideoPolishClient.overrideResponseForTest = previousResponse
+        }
     }
     @Test fun completedStagesSurviveLaterFailureAndInvalidateOnlyDownstream() {
         var state=VideoPipelineCheckpoint()

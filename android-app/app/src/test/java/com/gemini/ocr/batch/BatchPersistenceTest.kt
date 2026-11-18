@@ -3,7 +3,11 @@ package com.gemini.ocr.batch
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import com.gemini.ocr.movie.MovieEpisode
+import com.gemini.ocr.movie.MovieLibrary
+import com.gemini.ocr.movie.MovieRecord
 import com.gemini.ocr.video.*
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,6 +48,37 @@ class BatchPersistenceTest {
         assertEquals(output, reopened.outputs.single())
         assertEquals("Không có quyền đọc", reopened.items.first { it.episode == "2" }.error)
     }
+    @Test fun deleteOnlyRemovesTheSelectedDraftWithTheSameTitle() = runBlocking {
+        val source = File(context.cacheDir, "draft-fixture.mp4").apply { writeText("fixture") }
+        val videos = VideoStore(context)
+        val video = videos.save(VideoProject(UUID.randomUUID().toString(), "Source", Uri.fromFile(source).toString(),
+            1000, 640, 360, cues = listOf(VideoCue("one", 100, 500, "你好", "Xin chào", approved = true))))
+        val store = BatchStore(context)
+        val draft = store.save(store.create("Phim mới", BatchKind.SERIES).copy(
+            items = listOf(BatchItem(video.id, "draft-fixture.mp4")), state = "PAUSED"))
+        val other = store.create(draft.title, BatchKind.SERIES)
+        val jobs = BatchJobs(context)
+        jobs.deleteDraft(draft.id)
+        assertEquals(listOf(other.id), jobs.batches.value.map { it.id })
+        assertEquals(listOf(other), BatchStore(context).list())
+        assertEquals(video.cues, videos.load(video.id).cues)
+        assertTrue(source.isFile)
+    }
+
+    @Test fun deleteDraftRejectsAProjectAlreadySavedInMovieLibrary() = runBlocking {
+        val store = BatchStore(context)
+        val batch = store.create("Đã lưu", BatchKind.SERIES)
+        val movie = MovieRecord(batch.id, batch.title, listOf(MovieEpisode("one", "Tập 1", "", 1000)))
+        val library = MovieLibrary.get(context)
+        library.save(movie)
+        try {
+            BatchJobs(context).deleteDraft(batch.id)
+            fail("Saved movie must not be deleted as a draft")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(batch, store.load(batch.id))
+        assertEquals(movie, library.find(batch.id))
+    }
+
     @Test fun failedWriteDoesNotDestroyPreviousCheckpoint() {
         val store = BatchStore(context); val batch = store.create("Keep", BatchKind.MOVIE_PARTS)
         val bad = batch.copy(message = "x".repeat(33 * 1024 * 1024))

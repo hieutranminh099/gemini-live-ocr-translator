@@ -61,7 +61,13 @@ internal class VideoTranslationClient(private val context: Context? = null) {
     }
 
     companion object {
+        internal const val COMPACT_TARGETS_REVISION = "video-ocr-targets-v1"
         @Volatile internal var overrideResponseForTest: (suspend (VideoTranslationPlan.Batch) -> String)? = null
+        internal fun withCompactTargets(batch: VideoTranslationPlan.Batch): VideoTranslationPlan.Batch {
+            require(!batch.fullDialogue)
+            val context = JSONObject(batch.videoContext).put("promptRevision", COMPACT_TARGETS_REVISION)
+            return batch.copy(videoContext = context.toString(), compactTargets = true)
+        }
         internal fun requestClient(fullDialogue:Boolean)=StandaloneTranslator.httpClientForRequest(true,true).let{client->
             if(!fullDialogue)client else client.newBuilder().readTimeout(240,TimeUnit.SECONDS)
                 .callTimeout(240,TimeUnit.SECONDS).writeTimeout(60,TimeUnit.SECONDS).build()
@@ -72,10 +78,15 @@ internal class VideoTranslationClient(private val context: Context? = null) {
             val context = JSONObject(batch.videoContext)
             val targets = context.getJSONArray("targets")
             require(targets.length() == batch.cueIds.size)
-            for (index in batch.cueIds.indices) targets.getJSONObject(index).put("id", batch.cueIds[index])
+            for (index in batch.cueIds.indices) {
+                val target = targets.getJSONObject(index)
+                if (batch.compactTargets) require(target.getString("source") == batch.texts[index])
+                target.put("id", batch.cueIds[index])
+            }
             val request = JSONObject(StandaloneTranslator.buildGeminiRequestJson(batch.texts, profile = profile,
                 glossary = PhoneTranslationCache.parseGlossary(glossary), contextItems = emptyList(),
-                structuredOutput = true, videoTranslationContext = context.toString(), videoMaxOutputTokens = batch.maxOutputTokens))
+                structuredOutput = true, videoTranslationContext = context.toString(), videoMaxOutputTokens = batch.maxOutputTokens,
+                videoTargetsContainSource = batch.compactTargets))
             val parts = request.getJSONObject("systemInstruction").getJSONArray("parts")
             parts.put(JSONObject().put("text", "Hợp đồng trả lời video: trả JSON {\"translations\":[{\"id\":\"ID câu nguồn\",\"translation\":\"bản Việt\"}]}. Sao chép đúng ID từ targets. Mỗi ID đúng một lần. Chỉ dịch targets; không đổi ID, timestamp hoặc nguồn. Không suy ID từ thứ tự và không trả mảng chuỗi. Nếu không dịch được một câu, bỏ ID đó; không tự tạo bản dịch để đủ số lượng."))
             val item = JSONObject().put("type", "OBJECT").put("properties", JSONObject()
@@ -151,16 +162,19 @@ internal class VideoTranslationClient(private val context: Context? = null) {
                     throw VideoApiException("TEXT_BLOCKED", detail = "Dịch vụ từ chối nhóm nội dung; bản dịch trước được giữ.")
                 reason = VideoResponseFailureReason.FINISH_REASON
                 require(candidate.optString("finishReason") in setOf("", "STOP", "MAX_TOKENS"))
-                val truncated=batch.fullDialogue && candidate.optString("finishReason")=="MAX_TOKENS"
+                val truncated = (batch.fullDialogue || batch.compactTargets) && candidate.optString("finishReason") == "MAX_TOKENS"
                 reason = VideoResponseFailureReason.EMPTY_CONTENT
-                val parts = candidate.getJSONObject("content").getJSONArray("parts")
+                val allowEmptyCutoff = batch.compactTargets && truncated
+                val parts = if (allowEmptyCutoff)
+                    candidate.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
+                else candidate.getJSONObject("content").getJSONArray("parts")
                 val raw = buildString { for (i in 0 until parts.length()) {
                     val part = parts.getJSONObject(i)
                     if (!part.optBoolean("thought", false)) append(part.optString("text"))
                 } }
-                require(raw.isNotBlank())
+                require(raw.isNotBlank() || allowEmptyCutoff)
                 reason = VideoResponseFailureReason.JSON_SYNTAX
-                val rows = responseRows(raw,truncated)
+                val rows = if (allowEmptyCutoff && raw.isBlank()) JSONArray() else responseRows(raw,truncated)
                 reason = VideoResponseFailureReason.SCHEMA
                 require(rows.length() <= batch.cueIds.size)
                 val seen = HashSet<String>()

@@ -28,6 +28,13 @@ data class MovieSourceSnapshot(
         progress = 100, cues = cues, scanMs = episode.durationMs, updatedAt = revisedAt,
         message = "Bản phụ đề riêng trong Kho phim; không mã hóa lại video.")
 
+    internal fun withUpdatedCues(rows: List<VideoCue>, duration: Long, time: Long): MovieSourceSnapshot {
+        val timeline = VideoTimeline.validate(rows, duration)
+        return copy(cues = timeline, revisedAt = time,
+            revision = revision(sha256, bytes, width, height, timeline, style, sourceRoi, sourceMode))
+            .also { it.validate(duration) }
+    }
+
     private fun schemaVersion(): Int = if (style.legacyDefault &&
         sourceRoi == listOf(.06f, .72f, .94f, .96f) && sourceMode == VideoSourceMode.AUTO) 1 else 2
 

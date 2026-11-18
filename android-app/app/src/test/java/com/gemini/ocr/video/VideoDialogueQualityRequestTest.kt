@@ -172,4 +172,115 @@ class VideoDialogueQualityRequestTest {
         assertEquals("minimal",config.getJSONObject("thinkingConfig").getString("thinkingLevel"))
         assertFalse(after.contains(VideoDialoguePrompt.REVISION))
     }
+
+    @Test fun compactOcrRequestSendsEachTargetOnceAndKeepsContextAndGuards() {
+        val rows = cues().mapIndexed { index, cue ->
+            if (index == 1) cue.copy(
+                source = "他只买了三匹马，因为其余的马都留在镇上，明天还要赶路。",
+                translation = "",
+                localDraft = ""
+            ) else cue
+        }
+        val legacy = VideoStagedPipeline.withContext(VideoTranslationPlan.nextCloudBatch(rows, false)!!, "Cổ trang")
+        val compact = VideoTranslationClient.withCompactTargets(legacy)
+        val payload = request(compact, "historical", "马=ngựa")
+        val context = payload.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text")
+        assertEquals(1, Regex(Regex.escape(rows[1].source)).findAll(context).count())
+        assertEquals(1, Regex(Regex.escape(rows[2].source)).findAll(context).count())
+        assertFalse(context.contains("Câu nguồn cần dịch:"))
+        assertTrue(context.contains("马=ngựa"))
+        assertTrue(context.contains("Số đầu câu cũng là nội dung"))
+        assertEquals("Cổ trang", data(payload).getString("filmContext"))
+        assertEquals(rows[0].translation, data(payload).getJSONArray("previous").getJSONObject(0).getString("vietnamese"))
+        assertEquals("pending", data(payload).getJSONArray("targets").getJSONObject(1).getString("id"))
+        assertEquals(VideoTranslationClient.COMPACT_TARGETS_REVISION, data(payload).getString("promptRevision"))
+        val config = payload.getJSONObject("generationConfig")
+        assertEquals(canonical(idSchema(compact.cueIds)), canonical(config.getJSONObject("responseSchema")))
+        assertEquals(legacy.maxOutputTokens, config.getInt("maxOutputTokens"))
+        assertTrue(context.length < request(legacy, "historical", "马=ngựa").getJSONArray("contents")
+            .getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text").length)
+        assertNotEquals(BatchTranslationCache.key("private", legacy.videoContext),
+            BatchTranslationCache.key("private", compact.videoContext))
+    }
+
+    @Test fun compactOcrCutoffSavesOnlyCompleteIdsAndPreservesTheRestForRetry() {
+        val cues = listOf(VideoCue("a", 0, 800, "你好。"), VideoCue("b", 1000, 1800, "再见。"))
+        val batch = VideoTranslationClient.withCompactTargets(VideoTranslationPlan.nextCloudBatch(cues, false)!!)
+        fun response(raw: String, reason: String): VideoTranslationClient.Result {
+            val candidate = JSONObject().put("finishReason", reason)
+            if (raw.isNotEmpty()) {
+                candidate.put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", raw))))
+            }
+            val body = JSONObject().put("candidates", JSONArray().put(candidate))
+            return VideoTranslationClient.parseResponse(body.toString(), batch, "", "fixture")
+        }
+        val cut = """{"translations":[{"id":"a","translation":"Xin chào"},{"id":"b","translation":"Tạm"""
+        val partial = response(cut, "MAX_TOKENS")
+        assertTrue(partial.truncated)
+        assertEquals(mapOf("a" to "Xin chào"), partial.accepted)
+        assertEquals(listOf("b"), partial.missingIds)
+        val empty = response("", "MAX_TOKENS")
+        assertTrue(empty.truncated)
+        assertTrue(empty.accepted.isEmpty())
+        assertEquals(batch.cueIds, empty.missingIds)
+        val completeAtCutoff = response(
+            """{"translations":[{"id":"b","translation":"Tạm biệt"},{"id":"a","translation":"Xin chào"}]}""",
+            "MAX_TOKENS"
+        )
+        assertEquals(mapOf("b" to "Tạm biệt"), completeAtCutoff.accepted)
+        assertEquals(listOf("a"), completeAtCutoff.missingIds)
+        assertThrows(VideoApiException::class.java) { response(cut, "STOP") }
+        assertThrows(VideoApiException::class.java) { response(cut.replace("\"a\"", "\"other\""), "MAX_TOKENS") }
+        val duplicate = """{"translations":[{"id":"a","translation":"Xin chào"},{"id":"a","translation":"Chào bạn"},"""
+        assertThrows(VideoApiException::class.java) { response(duplicate, "MAX_TOKENS") }
+        val unexpectedTail = """{"translations":[{"id":"a","translation":"Xin chào"},unrelated"""
+        assertThrows(VideoApiException::class.java) { response(unexpectedTail, "MAX_TOKENS") }
+    }
+
+    @Test fun adaptiveOcrGroupRespectsSelectedMaximumAndRecoversFromPartialReplies() {
+        val groups = VideoAdaptiveTextGroups(50)
+        assertEquals(30, groups.limit)
+        repeat(3) { groups.complete(25) }
+        assertEquals(30, groups.limit)
+        repeat(3) { groups.complete(30) }
+        assertEquals(40, groups.limit)
+        repeat(3) { groups.complete(40) }
+        assertEquals(50, groups.limit)
+        groups.reduce(48)
+        assertEquals(24, groups.limit)
+        repeat(2) { groups.complete(24) }
+        assertEquals(24, groups.limit)
+        groups.complete(24)
+        assertEquals(34, groups.limit)
+        val capped = VideoAdaptiveTextGroups(10, 5)
+        repeat(3) { capped.complete(5) }
+        assertEquals(10, capped.limit)
+    }
+
+    @Test fun adaptiveGroupsNeedFewerRequestsOnShortCueFixtureWithoutChangingTimeline() {
+        val original = List(1558) { index ->
+            val start = index * 300L
+            VideoCue("ocr-draft-${index + 1}", start, start + 290L, "我们马上回家。")
+        }
+        fun run(maxCues: Int): Int {
+            var cues = original
+            var requests = 0
+            val dispatchedIds = mutableListOf<String>()
+            val groups = VideoAdaptiveTextGroups(maxCues)
+            while (true) {
+                val next = VideoTranslationPlan.nextCloudBatch(cues, false, maxCues = groups.limit) ?: break
+                dispatchedIds.addAll(next.cueIds)
+                cues = VideoTranslationPlan.applyCloudResult(
+                    cues, next, List(next.cueIds.size) { "Chúng ta về nhà ngay." }, "fixture", false
+                )
+                groups.complete(next.cueIds.size)
+                requests++
+            }
+            assertEquals(original.map { it.id }, dispatchedIds)
+            assertEquals(original, cues.map { it.copy(translation = "", model = "") })
+            return requests
+        }
+        assertEquals(52, run(30))
+        assertEquals(33, run(50))
+    }
 }

@@ -83,6 +83,6 @@ internal class VideoBatchProfiler(
     private companion object {
         val OCR_COUNTERS = listOf("decoded_frames", "recognition_requests", "ocr_native_calls",
             "exact_pixel_reused_observations", "luma_buffer_reuses", "crop_wall_ms", "bitmap_wall_ms", "ocr_wall_ms",
-            "decode_and_other_wall_ms", "gate_wall_ms")
+            "decode_and_other_wall_ms", "gate_wall_ms", "exact_source_reuses")
     }
 }

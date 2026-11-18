@@ -17,16 +17,23 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.gemini.ocr.SessionState
 import com.gemini.ocr.video.VideoDecoder
+import com.gemini.ocr.video.MoviePreviewControls
 import com.gemini.ocr.video.VideoPreview
 import com.gemini.ocr.video.VideoFullscreenWindow
 import com.gemini.ocr.video.VideoProject
 import com.gemini.ocr.video.VideoActivity
 import com.gemini.ocr.video.VideoStore
+import com.gemini.ocr.video.VideoCue
+import com.gemini.ocr.video.VideoTimeline
+import com.gemini.ocr.video.VideoTranslationClient
+import com.gemini.ocr.settings.AppSettings
 import com.gemini.ocr.ui.GeminiTheme
 import com.gemini.ocr.ui.StatusNotice
 import com.gemini.ocr.video.sync.VideoCloudSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,6 +46,7 @@ class MoviePlaybackActivity : ComponentActivity() {
     private val progressSequence = AtomicLong()
     private val progressLock = Any()
     private var writtenProgressSequence = 0L
+    private val pendingPositions = java.util.concurrent.ConcurrentHashMap<String,Pair<Long,Long>>()
     override fun onStart() { super.onStart(); SessionState.videoActivityVisible.value = true }
     override fun onStop() { SessionState.videoActivityVisible.value = false; super.onStop() }
     @OptIn(ExperimentalLayoutApi::class)
@@ -56,8 +64,13 @@ class MoviePlaybackActivity : ComponentActivity() {
                 var editProjectId by rememberSaveable { mutableStateOf("") }
                 var editingRevision by rememberSaveable { mutableStateOf("") }
                 var editingBusy by remember { mutableStateOf(false) }
-                var switchingEpisode by remember { mutableStateOf(false) }
+                var playbackSettings by remember { mutableStateOf(MoviePlaybackSettings.load(this@MoviePlaybackActivity)) }
+                var showPlaybackSettings by rememberSaveable { mutableStateOf(false) }
+                var caption by remember { mutableStateOf<PlaybackCaption?>(null) }
+                var captionText by remember { mutableStateOf("") }
+                var captionMessage by remember { mutableStateOf("") }
                 val scope=rememberCoroutineScope()
+                val positionReader = remember { arrayOfNulls<() -> Long>(1) }
                 val movies by library.movies.collectAsState()
                 val currentMovie=movies.firstOrNull{it.id==movieId}
                 val currentEpisode=currentMovie?.episodes?.firstOrNull{it.id==episodeId}
@@ -69,39 +82,45 @@ class MoviePlaybackActivity : ComponentActivity() {
                 SideEffect { if (loaded != null) lastLandscape = landscape }
                 // This owner survives the nullable player's source verification/cloud loading gap.
                 VideoFullscreenWindow(fullscreen, landscape)
-                fun adjacentEpisode(direction: Int, position: Long): Boolean {
-                    val selection = loaded ?: return false
+                val neighbors = remember(currentMovie?.episodes?.map { it.id to it.mediaUri }, episodeId) {
+                    listOfNotNull(currentMovie?.let { movieAdjacentEpisode(it, episodeId, -1) },
+                        currentMovie?.let { movieAdjacentEpisode(it, episodeId, 1) })
+                }
+                val localNeighbors by produceState<Set<String>>(emptySet(), neighbors) {
+                    value = withContext(Dispatchers.IO) { neighbors.filter(library::isAvailable).map { it.id }.toSet() }
+                }
+                fun ready(episode: MovieEpisode?): Boolean =
+                    episode != null && (episode.id in localNeighbors ||
+                        currentMovie?.let { it.cloudId.isNotBlank() && ownsAccount(it.accountEmail) } == true)
+                fun adjacentEpisode(direction: Int, position: Long, onlyLocal: Boolean = false): Boolean {
                     val record = currentMovie ?: return false
                     val next = movieAdjacentEpisode(record, episodeId, direction) ?: return false
-                    if (switchingEpisode || editingBusy || !ownsAccount(selection.accountEmail)) return false
-                    val outgoingId = episodeId
-                    switchingEpisode = true
-                    scope.launch {
-                        try {
-                            // Persist the outgoing player's exact position before invalidating its generation.
-                            // Any previously queued, older observations are rejected by the sequence guard.
-                            withContext(Dispatchers.IO) {
-                                synchronized(progressLock) {
-                                    require(selection.generation == playbackGeneration.get() && ownsAccount(selection.accountEmail)) {
-                                        "Phiên phát hoặc tài khoản đã thay đổi."
-                                    }
-                                    val sequence = progressSequence.incrementAndGet()
-                                    library.progress(movieId, outgoingId, position, System.currentTimeMillis(),
+                    if (editingBusy || caption != null || !ownsAccount(record.accountEmail) ||
+                        (onlyLocal && next.id !in localNeighbors)) return false
+                    val selection = loaded?.takeIf { it.episodeId == episodeId }
+                    if (selection != null) {
+                        val observedAt = System.currentTimeMillis()
+                        pendingPositions[selection.episodeId] = observedAt to position
+                        // Persist a captured outgoing observation independently of loading the next source.
+                        // Store rejects older observations and mismatched account/source revisions.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                if (ownsAccount(selection.accountEmail)) {
+                                    library.progress(movieId, selection.episodeId, position, observedAt,
                                         selection.accountEmail, selection.revision)
-                                    writtenProgressSequence = sequence
-                                }
-                                if (ownsAccount(selection.accountEmail))
                                     MovieCloudSync.get(this@MoviePlaybackActivity).enqueueProgress(movieId, replace = true)
+                                }
+                            } catch (e: CancellationException) { throw e }
+                            catch (e: Exception) {
+                                withContext(Dispatchers.Main) { error = "Chưa lưu được vị trí tập trước. " + (e.message ?: "Hãy kiểm tra dung lượng máy.") }
                             }
-                            if (selection.generation == playbackGeneration.get() && ownsAccount(selection.accountEmail)) {
-                                editProjectId = ""; editingRevision = ""
-                                loaded = null
-                                episodeId = next.id
-                            }
-                        } catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { error = e.message ?: "Chưa chuyển được tập. Vị trí xem vẫn được giữ." }
-                        finally { switchingEpisode = false }
+                        }
                     }
+                    playbackGeneration.incrementAndGet()
+                    positionReader[0] = null
+                    editProjectId = ""; editingRevision = ""
+                    loaded = null
+                    episodeId = next.id
                     return true
                 }
                 BackHandler(fullscreen) { fullscreen = false }
@@ -109,7 +128,19 @@ class MoviePlaybackActivity : ComponentActivity() {
                     if (ownerAccount.isNotBlank() && ownerAccount != account.accountEmail) finish()
                 }
                 LaunchedEffect(movieId, episodeId, currentEpisode?.source?.revision, currentMovie?.cloudId, loadAttempt) {
+                    val existing = loaded
+                    val source = currentEpisode?.source
+                    if (existing != null && source != null && existing.episodeId == episodeId && existing.isLocal &&
+                        source.sha256 == existing.sourceHash && source.uri == existing.project.uri &&
+                        source.width == existing.project.width && source.height == existing.project.height &&
+                        currentEpisode.durationMs == existing.project.durationMs && ownsAccount(existing.accountEmail)
+                    ) {
+                        loaded = existing.copy(revision = source.revision, project = existing.project.copy(
+                            cues = source.cues, style = source.style, roi = source.sourceRoi, sourceMode = source.sourceMode))
+                        return@LaunchedEffect
+                    }
                     val generation = playbackGeneration.incrementAndGet()
+                    positionReader[0] = null
                     loaded = null
                     error = ""
                     try {
@@ -117,7 +148,7 @@ class MoviePlaybackActivity : ComponentActivity() {
                             loadMovie(library, movieId, episodeId, generation)
                         }
                         require(ownsAccount(selection.accountEmail)) { "Tài khoản Google đã thay đổi." }
-                        loaded = selection
+                        if (generation == playbackGeneration.get()) loaded = selection
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -127,7 +158,20 @@ class MoviePlaybackActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().then(if (fullscreen) Modifier else Modifier.padding(12.dp))) {
                         if (!fullscreen) {
-                            TextButton(onClick = { finish() }) { Text("Về Kho phim") }
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                TextButton(onClick = { finish() }) { Text("Về Kho phim", maxLines = 1) }
+                                Column(Modifier.weight(1f)) {
+                                    Text(currentMovie?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    Text(currentEpisode?.title.orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                                }
+                                if ((currentMovie?.episodes?.size ?: 0) > 1) {
+                                TextButton(onClick={adjacentEpisode(-1, positionReader[0]?.invoke() ?: pendingPositions[episodeId]?.second ?: currentEpisode?.positionMs ?: 0)},
+                                    enabled=movieAdjacentEpisode(currentMovie!!,episodeId,-1)!=null && !editingBusy){Text("Tập trước")}
+                                TextButton(onClick={adjacentEpisode(1, positionReader[0]?.invoke() ?: pendingPositions[episodeId]?.second ?: currentEpisode?.positionMs ?: 0)},
+                                    enabled=movieAdjacentEpisode(currentMovie!!,episodeId,1)!=null && !editingBusy){Text("Tập tiếp")}
+                                }
+                            }
                             if ((currentMovie?.episodes?.size ?: 0) > 1)
                                 Text("Vuốt xuống để xem tập tiếp · vuốt lên để về tập trước", style = MaterialTheme.typography.bodySmall)
                             if(currentEpisode?.source!=null) {
@@ -171,15 +215,90 @@ class MoviePlaybackActivity : ComponentActivity() {
                             Text("Đang mở video…", style=MaterialTheme.typography.bodySmall)
                         }
                         loaded?.let { selection ->
+                            val modes = remember(selection.project) { movieSubtitleModes(selection.project) }
+                            val mode = playbackSettings.mode.takeIf { it in modes } ?: modes.firstOrNull() ?: MovieSubtitleMode.OFF
+                            val display = remember(selection.project, mode, playbackSettings.style(selection.project.style)) {
+                                selection.project.copy(cues = movieDisplayCues(selection.project.cues, mode),
+                                    style = playbackSettings.style(selection.project.style))
+                            }
+                            if (showPlaybackSettings) MoviePlaybackSettingsDialog(
+                                playbackSettings, modes, selection.project.style.displayStyle(),
+                                onChange = { playbackSettings = it }, onDismiss = {
+                                    playbackSettings.save(this@MoviePlaybackActivity)
+                                    showPlaybackSettings = false
+                                })
+                            caption?.let { edit ->
+                                val canUndo = currentEpisode?.captionUndo?.let { it.revision == edit.revision &&
+                                    it.previous.id == edit.cue.id } == true
+                                val settings = remember { AppSettings(this@MoviePlaybackActivity) }
+                                fun saveCaption(text: String?) {
+                                    editingBusy = true
+                                    captionMessage = "Đang lưu…"
+                                    scope.launch {
+                                        try {
+                                            require(playbackGeneration.get() == edit.generation && ownsAccount(selection.accountEmail))
+                                            library.savePlaybackCaption(movieId, edit.episodeId, edit.revision,
+                                                edit.cue.id, text, edit.position)
+                                            caption = null
+                                        } catch (cancel: CancellationException) { throw cancel }
+                                        catch (failure: Exception) { captionMessage = failure.message ?: "Chưa lưu được câu." }
+                                        finally { editingBusy = false }
+                                    }
+                                }
+                                MovieCaptionDialog(edit.cue, captionText, { captionText = it }, editingBusy, captionMessage,
+                                    canRetry = settings.hasGeminiVideoKey(), canUndo = canUndo,
+                                    onRetry = {
+                                        editingBusy = true
+                                        captionMessage = "Đang lấy gợi ý…"
+                                        scope.launch {
+                                            try {
+                                                val request = movieCaptionRequest(selection.project, edit.cue.id)
+                                                val reply = VideoTranslationClient(this@MoviePlaybackActivity).translate(
+                                                    settings.effectiveStandaloneApiKey(), request, settings.profile, settings.localGlossary
+                                                ) {
+                                                    currentCoroutineContext().ensureActive()
+                                                    check(!SessionState.running.value) { "Dừng Live trước khi yêu cầu dịch lại." }
+                                                    check(playbackGeneration.get() == edit.generation && ownsAccount(selection.accountEmail))
+                                                }
+                                                require(caption === edit && loaded?.revision == edit.revision) { "Phụ đề đã đổi; gợi ý cũ bị bỏ qua." }
+                                                captionText = requireNotNull(reply.accepted[edit.cue.id]) { "Gemini chưa trả lời cho câu này." }
+                                                captionMessage = "Xem lại gợi ý rồi bấm Lưu để áp dụng."
+                                            } catch (cancel: CancellationException) { throw cancel }
+                                            catch (failure: Exception) { captionMessage = failure.message ?: "Chưa nhận được gợi ý." }
+                                            finally { editingBusy = false }
+                                        }
+                                    }, onUndo = { saveCaption(null) }, onSave = { saveCaption(captionText) },
+                                    onDismiss = { caption = null })
+                            }
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 VideoPreview(selection.project, null, false, false, {}, {}, fullscreen, { fullscreen = it },
                                     playbackOnly = true,
-                                    initialPositionMs = selection.position.coerceIn(0, selection.project.durationMs),
+                                    initialPositionMs = movieResumePosition(selection.position, selection.project.durationMs),
                                     onPosition = { writeProgress(library, movieId, selection.episodeId, selection, it) },
                                     dataSourceFactory = selection.factory,
                                     onPositionFlushed = { syncFinalProgress(library, movieId, selection.episodeId, selection) },
-                                    onEpisodeSwipe = if ((currentMovie?.episodes?.size ?: 0) > 1) ::adjacentEpisode else null,
-                                    managesFullscreenWindow = false)
+                                    onEpisodeSwipe = if (neighbors.isNotEmpty()) { direction, position ->
+                                        adjacentEpisode(direction, position)
+                                    } else null,
+                                    onPositionReader = { reader ->
+                                        if (selection.generation == playbackGeneration.get()) positionReader[0] = reader
+                                    },
+                                    managesFullscreenWindow = false,
+                                    movieControls = MoviePreviewControls(display, playbackSettings.appearance(), playbackSettings.controlTimeout,
+                                        ready(currentMovie?.let { movieAdjacentEpisode(it, episodeId, -1) }),
+                                        ready(currentMovie?.let { movieAdjacentEpisode(it, episodeId, 1) }),
+                                        onSettings = { showPlaybackSettings = true },
+                                        onEnded = { position ->
+                                            if (playbackSettings.autoNext) adjacentEpisode(1, position, onlyLocal = true)
+                                        },
+                                        onCaptionEdit = selection.revision?.takeIf { selection.isLocal && movieId.isNotBlank() }
+                                            ?.let { revision -> { position ->
+                                                VideoTimeline.active(selection.project.cues, position)?.let { cue ->
+                                                    caption = PlaybackCaption(selection.episodeId, revision, cue, position, selection.generation)
+                                                    captionText = cue.translation
+                                                    captionMessage = ""
+                                                }
+                                            } }))
                             }
                         }
                     }
@@ -197,17 +316,19 @@ class MoviePlaybackActivity : ComponentActivity() {
         val episode = record?.episodes?.firstOrNull { it.id == episodeId }
         if (movieId.isNotBlank()) require(episode != null) { "Không tìm thấy tập phim trong tài khoản hiện tại." }
         try {
+            val started = android.os.SystemClock.elapsedRealtimeNanos()
             val local = localProject(library, record, episode)
-            return LoadedMovie(local, episode?.positionMs ?: 0, record?.accountEmail.orEmpty(),
-                episode?.source?.revision, null, generation, episodeId)
+            MoviePlaybackTrace.emit("source_ready", started)
+            return LoadedMovie(local, resumePosition(episode), record?.accountEmail.orEmpty(),
+                episode?.source?.revision, null, generation, episodeId, episode?.source?.sha256)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (record == null || episode == null || record.cloudId.isBlank()) throw e
         }
         val cloud = MovieCloudSync.get(this).preparePlayback(movieId, episodeId)
-        return LoadedMovie(cloud.project, cloud.episode.positionMs, cloud.accountEmail,
-            cloud.episode.source?.revision, cloud.dataSourceFactory, generation, episodeId)
+        return LoadedMovie(cloud.project, resumePosition(cloud.episode), cloud.accountEmail,
+            cloud.episode.source?.revision, cloud.dataSourceFactory, generation, episodeId, cloud.episode.source?.sha256)
     }
 
     private suspend fun localProject(library: MovieLibrary, record: MovieRecord?, episode: MovieEpisode?): VideoProject {
@@ -215,10 +336,15 @@ class MoviePlaybackActivity : ComponentActivity() {
             val source = episode.source
             require(library.isAvailable(episode)) { "Không còn đọc được video nguồn trong máy." }
             val uri = Uri.parse(source.uri)
-            require(MovieSourceAccess.inspect(this, uri) == (source.sha256 to source.bytes)) {
+            val hashStarted = android.os.SystemClock.elapsedRealtimeNanos()
+            val fingerprint = MovieSourceAccess.inspect(this, uri)
+            MoviePlaybackTrace.emit("source_hash", hashStarted)
+            require(fingerprint == (source.sha256 to source.bytes)) {
                 "Video nguồn đã bị thay thế. Phụ đề đã lưu vẫn được giữ."
             }
-            val metadata = VideoDecoder.metadata(this, uri)
+            val metadataStarted = android.os.SystemClock.elapsedRealtimeNanos()
+            val metadata = MovieVerifiedMetadata.process.get(fingerprint) { VideoDecoder.metadata(this, uri) }
+            MoviePlaybackTrace.emit("metadata", metadataStarted)
             require(kotlin.math.abs(metadata.durationMs - episode.durationMs) <= 1000) { "Thời lượng nguồn đã thay đổi." }
             return source.project(episode)
         }
@@ -228,7 +354,9 @@ class MoviePlaybackActivity : ComponentActivity() {
             "Không có bản ngoại tuyến hợp lệ."
         }
         val uri = Uri.fromFile(file)
+        val metadataStarted = android.os.SystemClock.elapsedRealtimeNanos()
         val metadata = VideoDecoder.metadata(this, uri)
+        MoviePlaybackTrace.emit("metadata", metadataStarted)
         require(episode == null || kotlin.math.abs(metadata.durationMs - episode.durationMs) <= 1000) {
             "Thời lượng bản ngoại tuyến đã thay đổi."
         }
@@ -236,10 +364,17 @@ class MoviePlaybackActivity : ComponentActivity() {
             uri.toString(), metadata.durationMs, metadata.width, metadata.height)
     }
 
+    private fun resumePosition(episode:MovieEpisode?):Long {
+        if(episode==null)return 0
+        val pending=pendingPositions[episode.id]
+        return if(pending!=null && pending.first>=episode.positionUpdatedAt) pending.second else episode.positionMs
+    }
+
     private fun writeProgress(library: MovieLibrary, movieId: String, episodeId: String, movie: LoadedMovie, position: Long) {
-        if (movieId.isBlank()) return
+        if (movieId.isBlank() || movie.generation != playbackGeneration.get()) return
         val sequence = progressSequence.incrementAndGet()
         val observedAt = System.currentTimeMillis()
+        pendingPositions[episodeId] = observedAt to position
         lifecycleScope.launch(Dispatchers.IO) {
             synchronized(progressLock) {
                 // Reject writes queued by an old player or overtaken by a newer observation.
@@ -272,6 +407,10 @@ internal fun movieAdjacentEpisode(movie: MovieRecord, episodeId: String, directi
 }
 
 private data class LoadedMovie(val project: VideoProject, val position: Long, val accountEmail: String,
-    val revision: String?, val factory: DataSource.Factory?, val generation: Long, val episodeId: String) {
+    val revision: String?, val factory: DataSource.Factory?, val generation: Long, val episodeId: String,
+    val sourceHash: String?) {
     val isLocal get() = factory == null
 }
+
+private data class PlaybackCaption(val episodeId: String, val revision: String, val cue: VideoCue,
+    val position: Long, val generation: Long)

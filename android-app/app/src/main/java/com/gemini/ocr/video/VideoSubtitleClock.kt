@@ -58,12 +58,14 @@ internal class VideoSubtitleClock(
 }
 
 /** Callback belongs to its player, even while Compose replaces the currently selected project. */
-internal class VideoPositionReporter(initialPosition:Long = -1000, var callback:(Long)->Unit) {
+internal class VideoPositionReporter(initialPosition: Long = -1000, private val intervalMs: Long = 1000,
+    var callback: (Long) -> Unit
+) {
     var onFlush: () -> Unit = {}
     private var last = initialPosition
     private var changed = false
     fun report(position:Long) {
-        if (abs(position - last) >= 1000) publish(position)
+        if (abs(position - last) >= intervalMs) publish(position)
     }
     fun flush(position:Long) {
         if (position != last) publish(position)
@@ -85,5 +87,7 @@ internal object VideoPreviewDiagnostics {
     @Volatile internal var onPlayerForTest:((String,Player?)->Unit)?=null
     @Volatile internal var onFrameForTest:((VideoPreviewFrame)->Unit)?=null
     fun player(projectId:String,player:Player?){if(BuildConfig.DEBUG)onPlayerForTest?.invoke(projectId,player)}
-    fun frame(frame:VideoPreviewFrame){if(BuildConfig.DEBUG)onFrameForTest?.invoke(frame)}
+    inline fun frame(observation: () -> VideoPreviewFrame) {
+        if (BuildConfig.DEBUG) onFrameForTest?.invoke(observation())
+    }
 }

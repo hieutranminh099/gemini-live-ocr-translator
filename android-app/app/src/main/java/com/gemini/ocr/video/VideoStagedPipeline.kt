@@ -89,8 +89,16 @@ object VideoStagedPipeline {
         cue.copy(rawZh=raw,correctedZh=corrected,source=if(cue.protectedText)cue.source else corrected,
             qualityFlags=flags.toList(),version=if(raw!=cue.rawZh || corrected!=cue.correctedZh)cue.version+1 else cue.version)
     }
-    fun needsPolish(cue: VideoCue) = !cue.protectedText && cue.translation.isNotBlank() && cue.polishedVi.isBlank() &&
-        (cue.qualityFlags.any{it!="ASR_UNAVAILABLE"} || cue.translation.length>84 || cue.translation.lines().any{it.length>46} || cue.error.isNotBlank())
+    fun needsPolish(project: VideoProject, cue: VideoCue): Boolean {
+        if (cue.protectedText || cue.translation.isBlank() || cue.polishedVi.isNotBlank()) return false
+        val geminiOcr = project.translationMode == VideoTranslationMode.GEMINI &&
+            (cue.origin == "OCR" || project.sourceMode == VideoSourceMode.OCR && cue.origin == "SUBTITLE")
+        // Short display time remains visible for review. By itself it gives Gemini no new
+        // evidence about the wording. Independent recognition and translation issues still qualify.
+        return cue.qualityFlags.any { it != "ASR_UNAVAILABLE" && !(geminiOcr && it == "SHORT_SUBTITLE") } ||
+            cue.translation.length > 84 || cue.translation.lineSequence().any { it.length > 46 } ||
+            cue.error.isNotBlank()
+    }
     fun sourceSrt(cues: List<VideoCue>,raw: Boolean=false,durationMs:Long?=null) = VideoTimeline.srt(cues.map{it.copy(
         translation=if(raw)it.rawZh.ifBlank{it.source} else it.correctedZh.ifBlank{it.source})},durationMs)
     fun applyRoi(project:VideoProject,roi:List<Float>,revision:Int):VideoProject {

@@ -57,6 +57,25 @@ private fun BatchDiagnosticContent(projectIds: List<String>, running: Boolean) {
                 style = MaterialTheme.typography.bodySmall)
             Text("Số câu chưa xong hiện tại hiển thị ở từng video.", style = MaterialTheme.typography.bodySmall)
         }
+        val performance = data.performance
+        if (performance.translateRequests > 0 || performance.polishRequests > 0)
+            Text("Lượt gửi theo công đoạn · Dịch ${number(performance.translateRequests)} · Hiệu đính ${number(performance.polishRequests)}",
+                style = MaterialTheme.typography.bodySmall)
+        if (performance.extractMs > 0 || performance.translateMs > 0 || performance.polishMs > 0) {
+            val seconds = remember { NumberFormat.getNumberInstance(Locale("vi", "VN")).apply { maximumFractionDigits = 2 } }
+            fun elapsed(ms: Long) = "${seconds.format(ms / 1000.0)} giây"
+            Text("Thời gian cộng dồn từng video · Trích xuất ${elapsed(performance.extractMs)} · Dịch ${elapsed(performance.translateMs)} · Hiệu đính ${elapsed(performance.polishMs)}",
+                style = MaterialTheme.typography.bodySmall)
+            if (performance.cropMs > 0 || performance.bitmapMs > 0 || performance.ocrMs > 0)
+                Text("Trích xuất · Cắt vùng chữ ${elapsed(performance.cropMs)} · Tạo ảnh ${elapsed(performance.bitmapMs)} · Đọc chữ ${elapsed(performance.ocrMs)}",
+                    style = MaterialTheme.typography.bodySmall)
+            if (performance.checkpointMs > 0 || performance.refreshMs > 0)
+                Text("Lưu tiến độ ${elapsed(performance.checkpointMs)} · Cập nhật danh sách ${elapsed(performance.refreshMs)}",
+                    style = MaterialTheme.typography.bodySmall)
+        }
+        if (performance.exactSourceReuses > 0)
+            Text("Tái sử dụng OCR từ video trùng nội dung · ${number(performance.exactSourceReuses)} lượt",
+                style = MaterialTheme.typography.bodySmall)
         Text("Lượt chờ/thử lại: ${number(data.retryWaits)} · yêu cầu dừng vì lỗi: ${number(data.failedRequests)}")
         diagnosticCauseLabel(data.retryCauses)?.let { Text("Lý do chờ: $it", style = MaterialTheme.typography.bodySmall) }
         diagnosticCauseLabel(data.failureCauses)?.let { Text("Lý do dừng: $it", style = MaterialTheme.typography.bodySmall) }

@@ -13,7 +13,8 @@ object VideoTranslationPlan {
     data class Batch(
         val indices:List<Int>,val cueIds:List<String>,val texts:List<String>,
         val offlineDrafts:List<String>,val videoContext:String,val maxOutputTokens:Int,
-        val fullDialogue:Boolean=false
+        val fullDialogue:Boolean=false,
+        val compactTargets:Boolean=false
     )
 
     fun needsLocalDraft(cue:VideoCue,hybrid:Boolean):Boolean = !cue.protectedText && cue.translation.isBlank() &&

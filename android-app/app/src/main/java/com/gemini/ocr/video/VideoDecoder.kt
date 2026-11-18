@@ -97,14 +97,25 @@ object VideoDecoder {
         val extractor=VideoCodecBoundary.call("create_extractor",project.scanMs){MediaExtractor()};var codec:MediaCodec?=null;var started=false
         val ocr=OcrProcessor("zh");val ring=ArrayDeque<VideoOcrFrame>()
         val tail=if(videoDrafts) VideoOcrTail() else null
-        val acc:VideoOcrTimeline=if(videoDrafts)VideoDraftTimeline(project.cues,project.carry)
-            else VideoOcrStabilizer(project.cues,project.carry)
-        val reuse=VideoOcrReuse()
+        val bitmapBuffer=if(videoDrafts) VideoOcrBitmapBuffer() else null
+        val draftTimeline = if (videoDrafts) VideoDraftTimeline(project.cues, project.carry) else null
+        val acc: VideoOcrTimeline = draftTimeline ?: VideoOcrStabilizer(project.cues, project.carry)
+        val reuse = VideoOcrReuse<VideoOcrReading>()
         val quality=VideoOcrDraftQuality(project.carry.optJSONArray("draftQuality"))
         var decoratedCues=acc.cues.size
         fun decorateNew(){while(decoratedCues<acc.cues.size){acc.cues[decoratedCues]=quality.close(acc.cues[decoratedCues]);decoratedCues++}}
         var reusedObservations=0L
         var lastEmitted=project.carry.optLong("scanLast",project.carry.optLong("last",-1))
+        fun accept(frame: VideoOcrFrame, reading: VideoOcrReading?, fromNative: Boolean) {
+            if (frame.ms <= lastEmitted) return
+            if (draftTimeline != null) {
+                if (reading != null && fromNative) quality.record(reading.displayText, reading.confidence,
+                    reading.flags, draftTimeline.representativeSource, frame.ms)
+                draftTimeline.addReading(frame.ms, reading)
+                decorateNew()
+            } else acc.add(frame.ms, reading?.raw)
+            lastEmitted = frame.ms
+        }
         var decoderName=""
         fun <T> codecStep(operation:String,block:()->T):T=VideoCodecBoundary.call(operation,
             lastEmitted.coerceAtLeast(project.scanMs),decoderName,block)
@@ -141,6 +152,7 @@ object VideoDecoder {
                 .put("ocr_native_calls",nativeCalls).put("upscaled_requests",upscaledRequests)
                 .put("uncertain_observations",uncertainObservations).put("multiline_observations",multilineObservations)
                 .put("exact_pixel_reused_observations",priorMetrics.optLong("exact_pixel_reused_observations")+reusedObservations)
+                .put("consolidated_ocr_variants", draftTimeline?.consolidatedVariants ?: 0)
                 .put("crop_wall_ms",cropMs).put("bitmap_wall_ms",bitmapMs).put("ocr_wall_ms",ocrMs)
                 .put("gate_wall_ms",gateMs).put("total_wall_ms",total)
                 .put("decode_and_other_wall_ms",(total-cropMs-bitmapMs-ocrMs-gateMs).coerceAtLeast(0))
@@ -148,24 +160,25 @@ object VideoDecoder {
                 .put("stable_sample_interval_ms",200).put("confirmation_sample_interval_ms",65)
         }
         fun carry(sourceMs:Long)=acc.snapshot().also{if(videoDrafts)it.put("draftQuality",quality.snapshot(it.optString("source")))}.put("metrics",metrics(sourceMs))
-        suspend fun recognize(frame:VideoOcrFrame,refinement:Boolean=false):String? {
+        suspend fun recognize(frame:VideoOcrFrame,refinement:Boolean=false):VideoOcrReading? {
             currentCoroutineContext().ensureActive()
             recognitionRequests++;if(refinement)refinementRequests++
             val prepareAt=SystemClock.elapsedRealtime()
-            val bitmap=frame.bitmap()
+            val bitmap=bitmapBuffer?.bitmap(frame) ?: frame.bitmap()
             bitmapMs+=SystemClock.elapsedRealtime()-prepareAt
             if(bitmap.width>frame.width || bitmap.height>frame.height)upscaledRequests++
             val ocrAt=SystemClock.elapsedRealtime()
             if(videoDrafts){
                 val draft=try{withContext(NonCancellable){ocr.processVideoDraft(bitmap)}}
-                    finally{ocrMs+=SystemClock.elapsedRealtime()-ocrAt;bitmap.recycle()}
+                    finally{ocrMs+=SystemClock.elapsedRealtime()-ocrAt;checkNotNull(bitmapBuffer).release(bitmap)}
                 currentCoroutineContext().ensureActive()
                 nativeCalls+=draft.nativePasses
                 if(draft.needsReview)uncertainObservations++
                 if(draft.lines.size>1)multilineObservations++
                 if(BuildConfig.DEBUG)draftObserverForTest?.invoke(frame.ms,draft)
-                quality.record(draft.text,draft.minConfidence,draft.flags,acc.snapshot().optString("source"),frame.ms)
-                return if(draft.text.isEmpty() && draft.needsReview)null else draft.text
+                if (draft.text.isEmpty() && draft.needsReview) return null
+                val confidence = draft.minConfidence.takeUnless { draft.lines.any { line -> line.confidence == null } }
+                return VideoOcrReading(draft.text, draft.lines.singleOrNull()?.bounds, confidence, draft.flags)
             }
             val observation=try {withContext(NonCancellable){ocr.processObservation(bitmap,
                 retainSourceFragments=true,fastDownscale=false,ocrPreCorrection=false,enforceSubtitlePolicy=true)}}
@@ -175,11 +188,12 @@ object VideoDecoder {
             if(observation.blocks.count{OcrRecoveryPolicy.hasHan(it.text)}>1)multilineObservations++
             currentCoroutineContext().ensureActive()
             if(observation.uncertain)return null
-            return observation.blocks.sortedWith(compareBy({it.rect.top},{it.rect.left}))
-                .filter{OcrRecoveryPolicy.hasHan(it.text)}.joinToString("\n"){it.text}
+            return VideoOcrReading(observation.blocks.sortedWith(compareBy({it.rect.top},{it.rect.left}))
+                .filter{OcrRecoveryPolicy.hasHan(it.text)}.joinToString("\n"){it.text})
         }
         try {
             val uri=Uri.parse(project.uri);val metadata=metadata(context,uri)
+            val cropper=VideoLumaCrop.Sampler(roi,metadata.rotation)
             codecStep("open_source"){extractor.setDataSource(context,uri,null)}
             val track=(0 until codecStep("read_track"){extractor.trackCount}).firstOrNull{codecStep("read_track"){extractor.getTrackFormat(it)}.getString(MediaFormat.KEY_MIME)?.startsWith("video/")==true}
                 ?:error("Video không có track hình ảnh.")
@@ -194,7 +208,9 @@ object VideoDecoder {
             codecStep("start"){decoder.start()};started=true
             val info=MediaCodec.BufferInfo();var inputEnded=false;var outputEnded=false
             var lastSample=project.scanMs-50;var nextOcr=project.scanMs;var lastCheckpoint=project.scanMs
-            var lastText=VideoOcrStabilizer.identity(project.carry.optString("source"))
+            var lastText = project.carry.optString("source").let { raw ->
+                if (videoDrafts) VideoOcrReading(raw).normalizedText else VideoOcrStabilizer.identity(raw)
+            }
             val watchdog=VideoDecodeWatchdog()
             while(!outputEnded){
                 currentCoroutineContext().ensureActive();val gateAt=SystemClock.elapsedRealtime();gate()
@@ -224,8 +240,8 @@ object VideoDecoder {
                             val reusableLuma=tail?.reusableLuma(ms,retain)
                             val frame=try {
                                 val crop=decoded.cropRect;val plane=decoded.planes[0]
-                                VideoLumaCrop.sample(ms,plane.buffer,plane.rowStride,plane.pixelStride,
-                                    crop.left,crop.top,crop.width(),crop.height(),roi,metadata.rotation,reusableLuma)
+                                cropper.sample(ms,plane.buffer,plane.rowStride,plane.pixelStride,
+                                    crop.left,crop.top,crop.width(),crop.height(),reusableLuma)
                             }finally{runCatching{decoded.close()};cropMs+=SystemClock.elapsedRealtime()-cropAt}
                             cropConversions++
                             if(frame.luma===reusableLuma)lumaBufferReuses++
@@ -245,15 +261,16 @@ object VideoDecoder {
                     while(ring.size>6)ring.removeFirst()
                     if(ms>=nextOcr){
                         val reused=reuse.lookup(frame,acc.needsConfirmation)
-                        val text=if(reused!=null){reusedObservations++;reused}else recognize(frame)
-                        reuse.record(frame,text)
-                        val key=text?.let(VideoOcrStabilizer::identity)
+                        val reading = if (reused != null) { reusedObservations++; reused } else recognize(frame)
+                        reuse.record(frame, reading)
+                        val key = reading?.let { if (videoDrafts) it.normalizedText else VideoOcrStabilizer.identity(it.raw) }
                         if(key!=null && key!=lastText){
                             // Revisit retained 50 ms samples in time order around a detected transition.
-                            for(old in ring){if(old.ms>lastEmitted && old!==frame){val t=recognize(old,true);acc.add(old.ms,t);lastEmitted=old.ms}}
+                            for (old in ring) if (old.ms > lastEmitted && old !== frame) {
+                                accept(old, recognize(old, refinement = true), fromNative = true)
+                            }
                         }
-                        if(ms>lastEmitted){acc.add(ms,text);lastEmitted=ms}
-                        if(videoDrafts)decorateNew()
+                        accept(frame, reading, fromNative = reused == null)
                         if(key!=null)lastText=key
                         // Background pixel changes are not subtitle changes. Confirm a
                         // candidate quickly; otherwise scan every 200ms and refine the ring
@@ -265,13 +282,13 @@ object VideoDecoder {
                 }
             }
             if(videoDrafts)VideoDecodeCoverage.requireComplete(lastInputMs,maxOutputMs,trackDurationMs)
-            if(videoDrafts){
+            if (draftTimeline != null) {
                 val finalFrame=tail?.frame
                 finalFrame?.takeIf{it.ms>lastEmitted}?.let{frame->
-                    gate();val text=recognize(frame)
-                    acc.add(frame.ms,text);lastEmitted=frame.ms;decorateNew()
+                    gate()
+                    accept(frame, recognize(frame), fromNative = true)
                 }
-                if(finalFrame!=null)(acc as VideoDraftTimeline).finishAtValidatedEnd(project.durationMs,finalFrame.ms)
+                if(finalFrame!=null)draftTimeline.finishAtValidatedEnd(project.durationMs,finalFrame.ms)
                 else acc.finish(project.durationMs)
             }else acc.finish(project.durationMs)
             if(videoDrafts)decorateNew()
@@ -289,7 +306,7 @@ object VideoDecoder {
             throw error
         } finally {
             ring.clear();tail?.clear()
-            VideoCodecBoundary.releaseAll({ocr.close()},{if(started)codec?.stop()},{codec?.release()},{extractor.release()})
+            VideoCodecBoundary.releaseAll({bitmapBuffer?.close()},{ocr.close()},{if(started)codec?.stop()},{codec?.release()},{extractor.release()})
         }
     }
 }

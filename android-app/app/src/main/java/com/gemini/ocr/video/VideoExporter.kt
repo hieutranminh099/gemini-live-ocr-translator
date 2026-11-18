@@ -466,9 +466,19 @@ private class MergeSampleTimes(file: File, private val type: Int) : Closeable {
     override fun close() { try { extractor.release() } finally { source.close() } }
 }
 
+/** Optional playback appearance. Exporters use the original style defaults. */
+internal data class VideoSubtitleAppearance(
+    val textColor: Int? = null,
+    val outlineColor: Int = Color.BLACK,
+    val outlineFraction: Float = .08f,
+    val shadow: Boolean = false,
+    val lineSpacing: Float = 1f
+)
+
 /** One current subtitle strip and a 1px transparent sentinel, independent of video length. */
 internal class TimelineBitmapOverlay(
-    cues: List<VideoCue>, style: VideoSubtitleStyle
+    cues: List<VideoCue>, style: VideoSubtitleStyle,
+    private val appearance: VideoSubtitleAppearance = VideoSubtitleAppearance()
 ) : BitmapOverlay() {
     private val style = style.displayStyle()
     private var cues: List<VideoCue> = canonical(cues)
@@ -545,6 +555,7 @@ internal class TimelineBitmapOverlay(
         val builder = StaticLayout.Builder.obtain(cleaned, 0, cleaned.length, paint, textWidth)
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .setIncludePad(true)
+            .setLineSpacing(0f, appearance.lineSpacing)
             .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
         if(Build.VERSION.SDK_INT>=29)builder.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
         val layout=builder.build()
@@ -554,37 +565,32 @@ internal class TimelineBitmapOverlay(
         val canvas = Canvas(output)
         if (style.background) canvas.drawColor(Color.BLACK)
         canvas.translate(padding.toFloat(), padding.toFloat())
-        if (style.outline) {
-            paint.color = Color.BLACK
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = ceil(paint.textSize * .08f)
-            paint.strokeJoin = Paint.Join.ROUND
-            layout.draw(canvas)
-        }
-        paint.color = if (style.yellowText) Color.rgb(255, 235, 59) else Color.WHITE
-        paint.style = Paint.Style.FILL
-        layout.draw(canvas)
+        drawText(canvas, layout, paint)
         return output
     }
 
     private fun renderFrame(text: String): Bitmap {
-        val measured = measureSubtitleFrame(text, style, videoWidth, videoHeight)
+        val measured = measureSubtitleFrame(text, style, videoWidth, videoHeight, appearance.lineSpacing)
         val output = Bitmap.createBitmap(measured.width, measured.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         if (style.background) canvas.drawColor(Color.BLACK)
         canvas.translate(measured.padding.toFloat(), measured.textTop)
-        val paint = measured.paint
-        if (style.outline) {
-            paint.color = Color.BLACK
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = ceil(paint.textSize * .08f)
-            paint.strokeJoin = Paint.Join.ROUND
-            measured.layout.draw(canvas)
-        }
-        paint.color = if (style.yellowText) Color.rgb(255, 235, 59) else Color.WHITE
-        paint.style = Paint.Style.FILL
-        measured.layout.draw(canvas)
+        drawText(canvas, measured.layout, measured.paint)
         return output
+    }
+
+    private fun drawText(canvas: Canvas, layout: StaticLayout, paint: TextPaint) {
+        if (style.outline && appearance.outlineFraction > 0) {
+            paint.color = appearance.outlineColor
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = ceil(paint.textSize * appearance.outlineFraction)
+            paint.strokeJoin = Paint.Join.ROUND
+            layout.draw(canvas)
+        }
+        paint.color = appearance.textColor ?: if (style.yellowText) Color.rgb(255, 235, 59) else Color.WHITE
+        paint.style = Paint.Style.FILL
+        if (appearance.shadow) paint.setShadowLayer(paint.textSize * .09f, 0f, paint.textSize * .06f, Color.BLACK)
+        layout.draw(canvas)
     }
 
     private fun clearBitmap() {
@@ -611,7 +617,8 @@ internal fun VideoSubtitleFrame.pixelBounds(width: Int, height: Int) = RectF(
 internal data class MeasuredSubtitleFrame(val width: Int, val height: Int, val padding: Int,
     val textTop: Float, val paint: TextPaint, val layout: StaticLayout, val text: String)
 
-internal fun measureSubtitleFrame(text: String, style: VideoSubtitleStyle, width: Int, height: Int): MeasuredSubtitleFrame {
+internal fun measureSubtitleFrame(text: String, style: VideoSubtitleStyle, width: Int, height: Int,
+    lineSpacing: Float = 1f): MeasuredSubtitleFrame {
     val frame = requireNotNull(style.frame)
     val bounds = frame.pixelBounds(width, height)
     val stripWidth = bounds.width().roundToInt().coerceAtLeast(1)
@@ -629,6 +636,7 @@ internal fun measureSubtitleFrame(text: String, style: VideoSubtitleStyle, width
         val builder = StaticLayout.Builder.obtain(cleaned, 0, cleaned.length, paint,
             (stripWidth - 2 * padding).coerceAtLeast(1))
             .setAlignment(Layout.Alignment.ALIGN_CENTER).setIncludePad(true)
+            .setLineSpacing(0f, lineSpacing)
             .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
         if (Build.VERSION.SDK_INT >= 29) builder.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
         return builder.build()

@@ -30,7 +30,7 @@ object VideoStageProgress {
         BatchPipelineStage.POLISH -> if (completed(project, stage)) 100 else {
             val targets = project.cues.filter { !it.protectedText && (it.polishedVi.isNotBlank() ||
                 project.translationMode == VideoTranslationMode.OFFLINE && project.offlinePolishPolicy == VideoPolishPolicy.ALL ||
-                VideoStagedPipeline.needsPolish(it)) }
+                VideoStagedPipeline.needsPolish(project, it)) }
             fraction(targets.count { it.polishedVi.isNotBlank() && "POLISH_PENDING" !in it.qualityFlags }, targets.size)
                 .coerceAtMost(99)
         }

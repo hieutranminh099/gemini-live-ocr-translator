@@ -62,4 +62,31 @@ class VideoOcrFrameTest {
         }finally{bitmap.recycle()}
         assertArrayEquals(byteArrayOf(16,235.toByte()),frame.luma)
     }
+
+    @Test fun scratchBitmapMatchesExistingScalingAndRefreshesEveryPixel() {
+        val buffer = VideoOcrBitmapBuffer()
+        try {
+            for (height in listOf(180, 80)) {
+                repeat(2) { pass ->
+                    val frame = VideoOcrFrame(0, 128, height, ByteArray(128 * height) { (it * 31 + pass * 17).toByte() })
+                    val expected = frame.bitmap()
+                    val actual = buffer.bitmap(frame)
+                    try {
+                        assertEquals(expected.width, actual.width)
+                        assertEquals(expected.height, actual.height)
+                        val expectedPixels = IntArray(expected.width * expected.height)
+                        val actualPixels = IntArray(actual.width * actual.height)
+                        expected.getPixels(expectedPixels, 0, expected.width, 0, 0, expected.width, expected.height)
+                        actual.getPixels(actualPixels, 0, actual.width, 0, 0, actual.width, actual.height)
+                        assertArrayEquals(expectedPixels, actualPixels)
+                    } finally {
+                        expected.recycle()
+                        buffer.release(actual)
+                    }
+                }
+            }
+        } finally {
+            buffer.close()
+        }
+    }
 }

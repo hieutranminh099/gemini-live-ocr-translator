@@ -572,7 +572,7 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
                                 }
                                 val slots = BatchParallelism.workerLimit(context, batch.executionMode)
                                 Text(if (batch.executionMode == BatchExecutionMode.SEQUENTIAL)
-                                    "Xử lý lần lượt từng video. Chọn 8 GB hoặc 16 GB để dịch nhiều video cùng lúc."
+                                    "Chọn 8 GB để thử dịch tối đa hai video cùng lúc khi đủ bộ nhớ."
                                     else "Dịch và hiệu đính tối đa $slots video cùng lúc trên máy này. Số luồng tự giảm khi thiếu bộ nhớ.",
                                     style = MaterialTheme.typography.bodySmall)
                                 Text("Mức 8 GB dùng tối đa 2 luồng; mức 16 GB dùng tối đa 8 luồng theo số lõi CPU và RAM còn trống. Tốc độ Gemini còn phụ thuộc mạng và hạn mức tài khoản.",
@@ -607,6 +607,13 @@ fun BatchScreen(initialBatchId: String = "", addOnOpen: Boolean = false, onBack:
                                     enabled = editable && filmContext != batch.contextProfile) { Text("Lưu ngữ cảnh bộ phim") }
                                 if(batch.translationMode==VideoTranslationMode.GEMINI)BatchChoice("Số câu mỗi nhóm Gemini", "$groupSize câu", editable, VideoSmartBatchSettings.GROUP_SIZES, { "$it câu" }) {
                                     groupSize = it; smartSettings.groupSize = it
+                                }
+                                if (batch.translationMode == VideoTranslationMode.GEMINI && !economyMode &&
+                                    (batch.sourceMode == VideoSourceMode.OCR || videos.any { video ->
+                                        video.sourceMode == VideoSourceMode.OCR && batch.items.any { it.projectId == video.id }
+                                    })) {
+                                    Text("Với OCR hình ảnh, mức 50 câu bắt đầu từ 30 và tăng khi kết quả ổn định. Nhóm tự giảm khi có nhiều câu thiếu hoặc lỗi định dạng.",
+                                        style = MaterialTheme.typography.bodySmall)
                                 }
                                 Text("Các nhóm trong cùng video giữ đúng thứ tự ngữ cảnh. Dịch đồng thời áp dụng giữa các video và nhường tài nguyên khi Live hoạt động.", style = MaterialTheme.typography.bodySmall)
                                 if(batch.translationMode!=VideoTranslationMode.OFFLINE) {

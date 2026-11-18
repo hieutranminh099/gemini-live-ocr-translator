@@ -22,7 +22,8 @@ data class VideoCue(
     val model: String = "", val error: String = "",
     val localDraft: String = "", val refinementState: String = "",
     val rawZh: String = "", val correctedZh: String = "", val draftVi: String = "", val polishedVi: String = "",
-    val ocrConfidence: Float? = null, val qualityFlags: List<String> = emptyList(), val version: Int = 1
+    val ocrConfidence: Float? = null, val qualityFlags: List<String> = emptyList(), val version: Int = 1,
+    val normalizedOcrText: String = "", val ocrAlternatives: List<String> = emptyList()
 ) {
     val protectedText get() = approved || (model == "user-edited" && translation.isNotBlank())
     fun json() = JSONObject().put("id", id).put("startMs", startMs).put("endMs", endMs)
@@ -31,6 +32,10 @@ data class VideoCue(
         .put("localDraft", localDraft).put("refinementState", refinementState)
         .put("rawZh", rawZh).put("correctedZh", correctedZh).put("draftVi", draftVi).put("polishedVi", polishedVi)
         .put("ocrConfidence", ocrConfidence ?: JSONObject.NULL).put("qualityFlags", JSONArray(qualityFlags)).put("version", version)
+        .apply {
+            if (normalizedOcrText.isNotEmpty()) put("normalizedOcrText", normalizedOcrText)
+            if (ocrAlternatives.isNotEmpty()) put("ocrAlternatives", JSONArray(ocrAlternatives))
+        }
     companion object {
         fun from(j: JSONObject) = VideoCue(j.getString("id"), j.getLong("startMs"), j.getLong("endMs"),
             j.getString("source"), j.optString("translation"), j.optBoolean("approved"),
@@ -38,7 +43,9 @@ data class VideoCue(
             j.optString("localDraft"), j.optString("refinementState"),
             j.optString("rawZh"), j.optString("correctedZh"), j.optString("draftVi"), j.optString("polishedVi"),
             if(j.has("ocrConfidence") && !j.isNull("ocrConfidence"))j.getDouble("ocrConfidence").toFloat().also{require(it.isFinite() && it in 0f..1f)} else null,
-            j.optJSONArray("qualityFlags")?.let{a->(0 until a.length()).map{a.getString(it)}} ?: emptyList(),j.optInt("version",1).also{require(it>=1)} )
+            j.optJSONArray("qualityFlags")?.let{a->(0 until a.length()).map{a.getString(it)}} ?: emptyList(),
+            j.optInt("version",1).also{require(it>=1)}, j.optString("normalizedOcrText"),
+            j.optJSONArray("ocrAlternatives")?.let { values -> List(values.length()) { values.getString(it) } }.orEmpty())
     }
 }
 

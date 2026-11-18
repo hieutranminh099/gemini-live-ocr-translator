@@ -8,6 +8,7 @@ import com.gemini.ocr.video.VideoProject
 import com.gemini.ocr.video.VideoStage
 import com.gemini.ocr.video.VideoStore
 import com.gemini.ocr.video.VideoTimeline
+import com.gemini.ocr.movie.mergeMovieTitle
 import com.gemini.ocr.movie.MovieRecord
 import com.gemini.ocr.movie.MoviePlaybackHandle
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -114,7 +116,8 @@ internal class DriveVideoRepository(
                 }
             } else {
                 require(episode.path.isNotBlank()) {"Tải bản ngoại tuyến trước khi đồng bộ thay đổi."}
-                inspectMovieMedia(File(episode.path),"video/mp4")
+                val file = File(episode.path)
+                inspectMovieMedia(file, movieMediaTypes[file.extension.lowercase(Locale.ROOT)] ?: "application/octet-stream")
             }
             onProgress("Đang tải ${episode.title.take(60)} lên Google Drive…")
             val existing=findMedia(local.sha,local.size)
@@ -164,12 +167,18 @@ internal class DriveVideoRepository(
             val id=item.getString("id").also{validId(it)}
             val envelope=movieManifest(id)
             val movie=MovieRecord.from(envelope.getJSONObject("movie")).copy(cloudId=id,syncState="CLOUD")
+            var titled=movie
             var episodes=movie.episodes
             var updatedAt=movie.updatedAt
             for(positionFile in positions[movie.id].orEmpty()) {
                 val raw=JSONObject(downloadBytes(positionFile.getString("id").also{validId(it)},MAX_MANIFEST).toString(Charsets.UTF_8))
                 require(raw.getInt("schema")==1 && raw.getString("kind")=="movie-progress" && raw.getString("movieId")==movie.id)
                 val snapshotAt=raw.getLong("updatedAt");require(snapshotAt>=0)
+                val titleStamp=raw.optLong("titleUpdatedAt")
+                if(titleStamp>0 && raw.has("title")) {
+                    val incoming=movie.copy(title=com.gemini.ocr.movie.movieTitle(raw.getString("title")),titleUpdatedAt=titleStamp)
+                    titled=titled.mergeMovieTitle(incoming)
+                }
                 updatedAt=maxOf(updatedAt,snapshotAt)
                 val rows=raw.getJSONArray("episodes")
                 val map=(0 until rows.length()).map{rows.getJSONObject(it)}.associateBy{it.getString("id")}
@@ -179,7 +188,7 @@ internal class DriveVideoRepository(
                         positionUpdatedAt=stamp,positionConflict=row.optBoolean("positionConflict")),keepLocalOnTie=false)
                 }?:episode}
             }
-            movie.copy(episodes=episodes,updatedAt=updatedAt,message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE else "")
+            titled.copy(episodes=episodes,updatedAt=updatedAt,message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE else "")
         }.sortedByDescending{it.confirmedAt}
     }
 
@@ -189,7 +198,7 @@ internal class DriveVideoRepository(
         require(movie.cloudId.isNotBlank()){"Đồng bộ phim trước khi gửi vị trí xem."}
         require(progressWriterId.matches(Regex("[a-zA-Z0-9_-]{1,64}")))
         val envelope=JSONObject().put("schema",1).put("kind","movie-progress").put("movieId",movie.id).put("writerId",progressWriterId)
-            .put("updatedAt",movie.updatedAt).put("episodes",JSONArray(movie.episodes.map{
+            .put("updatedAt",movie.updatedAt).put("title",movie.title).put("titleUpdatedAt",movie.titleUpdatedAt).put("episodes",JSONArray(movie.episodes.map{
                 JSONObject().put("id",it.id).put("positionMs",it.positionMs).put("positionUpdatedAt",it.positionUpdatedAt)
                     .put("positionConflict",it.positionConflict)
             }))
@@ -262,7 +271,11 @@ internal class DriveVideoRepository(
                     require(source.sha256==descriptor.getString("sha256") && source.bytes==descriptor.getLong("size")){
                         "Media nguồn không khớp snapshot phụ đề đã xác nhận."}
                 }
-                val target=File(folder,"$revision-$index.${if(episode.source!=null)"input" else "mp4"}");created+=target
+                val mime = descriptor.optString("mime", "video/mp4")
+                val extension = if (episode.source != null) "input"
+                    else movieMediaTypes.entries.firstOrNull { it.value == mime }?.key ?: "input"
+                val target = File(folder, "$revision-$index.$extension")
+                created += target
                 downloadFile(descriptor,target)
                 episode.copy(path=target.absolutePath,source=episode.source?.copy(uri=Uri.fromFile(target).toString(),projectId=""))
             }
@@ -519,6 +532,15 @@ internal class DriveVideoRepository(
     private fun validId(id:String){require(id.matches(Regex("[a-zA-Z0-9_-]{1,200}"))){"ID cloud không hợp lệ."}}
     private fun hash(bytes:ByteArray)=MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(""){"%02x".format(it)}
     companion object{
+        private val movieMediaTypes = mapOf(
+            "mp4" to "video/mp4",
+            "mkv" to "video/x-matroska",
+            "webm" to "video/webm",
+            "mov" to "video/quicktime",
+            "avi" to "video/x-msvideo",
+            "3gp" to "video/3gpp",
+            "ts" to "video/mp2t"
+        )
         private fun installationWriterId(context:Context):String=synchronized(DriveVideoRepository::class.java){
             val prefs=context.getSharedPreferences("movie-cloud-installation",Context.MODE_PRIVATE)
             prefs.getString("writerId",null)?:UUID.randomUUID().toString().also{

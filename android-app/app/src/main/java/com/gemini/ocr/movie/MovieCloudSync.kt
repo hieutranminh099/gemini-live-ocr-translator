@@ -155,7 +155,7 @@ class MovieCloudSync internal constructor(private val context:Context) {
                             "Phụ đề trong máy đã thay đổi; chưa thay bằng bản Drive. Bản chỉnh sửa hiện tại được giữ."}
                         if(old!=null)episode.mergeProgress(old).copy(path=episode.path) else episode
                     }
-                    downloaded.copy(episodes=episodes,updatedAt=maxOf(current.updatedAt,downloaded.updatedAt),
+                    downloaded.mergeMovieTitle(current).copy(episodes=episodes,updatedAt=maxOf(current.updatedAt,downloaded.updatedAt),
                         message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE else downloaded.message)
                 }){"Phim đã bị xóa trong lúc tải."}
                 // After atomic publication these files belong to the saved record, even if an
@@ -192,7 +192,7 @@ class MovieCloudSync internal constructor(private val context:Context) {
             }
             if(identity.state.value.accountEmail!=email)return@withLock true
             val current=library.find(id)?:return@withLock true
-            if(current.episodes.map{it.id to it.source?.revision}!=uploading.episodes.map{it.id to it.source?.revision}) {
+            if(current.titleUpdatedAt!=uploading.titleUpdatedAt || current.episodes.map{it.id to it.source?.revision}!=uploading.episodes.map{it.id to it.source?.revision}) {
                 library.update(id){it.copy(syncState="QUEUED",message="Có phụ đề mới đã lưu; đang chờ đồng bộ phiên bản mới.")}
                 return@withLock false
             }

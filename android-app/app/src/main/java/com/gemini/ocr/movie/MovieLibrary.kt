@@ -4,12 +4,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.AtomicFile
 import com.gemini.ocr.video.VideoDecoder
 import com.gemini.ocr.video.VideoJobs
 import com.gemini.ocr.video.VideoProject
 import com.gemini.ocr.video.VideoStore
 import com.gemini.ocr.video.sync.VideoCloudSync
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,16 +26,23 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
+import java.util.Locale
 import java.util.UUID
 
 data class MovieEpisode(val id:String,val title:String,val path:String,val durationMs:Long,val positionMs:Long=0,
-    val positionUpdatedAt:Long=0,val positionConflict:Boolean=false,val source:MovieSourceSnapshot?=null) {
+    val positionUpdatedAt:Long=0,val positionConflict:Boolean=false,val source:MovieSourceSnapshot?=null,
+    val imported: Boolean = false, val captionUndo: MovieCaptionUndo? = null) {
     val isSourceQuality get()=source!=null
     val mediaUri:String get()=source?.uri ?: path.takeIf{it.isNotBlank()}?.let{Uri.fromFile(File(it)).toString()}.orEmpty()
     internal fun json(portable:Boolean=false)=JSONObject().put("id",id).put("title",title)
         .put("path",if(portable)"" else path).put("durationMs",durationMs).put("positionMs",positionMs)
         .put("positionUpdatedAt",positionUpdatedAt).put("positionConflict",positionConflict)
         .put("source",source?.json(portable)?:JSONObject.NULL)
+        .apply {
+            if (imported) put("imported", true)
+            if (!portable) captionUndo?.takeIf { it.revision == source?.revision }?.let { put("captionUndo", it.json()) }
+        }
     internal fun mergeProgress(remote:MovieEpisode,keepLocalOnTie:Boolean=true):MovieEpisode {
         val incoming=remote.positionMs.coerceIn(0,durationMs)
         return when {
@@ -47,20 +56,21 @@ data class MovieEpisode(val id:String,val title:String,val path:String,val durat
     companion object {
         internal fun from(j:JSONObject,legacyUpdatedAt:Long=0)=MovieEpisode(j.getString("id"),j.getString("title"),j.optString("path"),
             j.getLong("durationMs"),j.optLong("positionMs"),j.optLong("positionUpdatedAt",legacyUpdatedAt),j.optBoolean("positionConflict"),
-            j.optJSONObject("source")?.let{MovieSourceSnapshot.from(it)})
+            j.optJSONObject("source")?.let{MovieSourceSnapshot.from(it)}, j.optBoolean("imported"),
+            j.optJSONObject("captionUndo")?.let { runCatching { MovieCaptionUndo.from(it) }.getOrNull() })
     }
 }
 
 data class MovieRecord(
     val id:String,val title:String,val episodes:List<MovieEpisode>,val accountEmail:String="",
     val syncState:String="LOCAL",val cloudId:String="",val coverPath:String="",
-    val confirmedAt:Long=System.currentTimeMillis(),val message:String="",val updatedAt:Long=confirmedAt
+    val confirmedAt:Long=System.currentTimeMillis(),val message:String="",val updatedAt:Long=confirmedAt,val titleUpdatedAt:Long=0
 ) {
     internal fun json(portable:Boolean=false)=JSONObject().put("schema",if(episodes.any{it.source!=null})2 else 1).put("id",id).put("title",title)
         .put("episodes",JSONArray(episodes.map{it.json(portable)})).put("accountEmail",if(portable)"" else accountEmail)
         .put("syncState",if(portable)"CLOUD" else syncState).put("cloudId",if(portable)"" else cloudId)
         .put("coverPath",if(portable)"" else coverPath).put("confirmedAt",confirmedAt).put("message",if(portable)"" else message)
-        .put("updatedAt",updatedAt)
+        .put("updatedAt",updatedAt).put("titleUpdatedAt",titleUpdatedAt)
     companion object {
         internal const val PROGRESS_CONFLICT_MESSAGE="Xung đột vị trí xem giữa các thiết bị. Đã giữ vị trí trên máy; hãy kiểm tra trước khi xem tiếp."
         internal fun from(j:JSONObject):MovieRecord {
@@ -69,14 +79,14 @@ data class MovieRecord(
             val rows=j.getJSONArray("episodes")
             val result=MovieRecord(j.getString("id"),j.getString("title"),(0 until rows.length()).map{MovieEpisode.from(rows.getJSONObject(it),j.optLong("updatedAt",j.getLong("confirmedAt")))},
                 j.optString("accountEmail"),j.optString("syncState","LOCAL"),j.optString("cloudId"),j.optString("coverPath"),
-                j.getLong("confirmedAt"),j.optString("message"),j.optLong("updatedAt",j.getLong("confirmedAt")))
+                j.getLong("confirmedAt"),j.optString("message"),j.optLong("updatedAt",j.getLong("confirmedAt")),j.optLong("titleUpdatedAt"))
             validate(result)
             require(schema!=2 || result.episodes.any{it.source!=null}){"Snapshot Kho phim nguồn thiếu timeline phụ đề."}
             return result
         }
         internal fun validate(record:MovieRecord) {
             require(record.id.matches(Regex("[a-f0-9-]{36}")) && record.title.isNotBlank() && record.title.length<=200)
-            require(record.confirmedAt>0 && record.episodes.isNotEmpty())
+            require(record.confirmedAt>0 && record.titleUpdatedAt>=0 && record.episodes.isNotEmpty())
             require(record.episodes.map{it.id}.toSet().size==record.episodes.size)
             require(record.episodes.all{it.id.isNotBlank() && it.id.length<=200 && it.title.length<=200 && it.durationMs>0 && it.positionMs in 0..it.durationMs && it.positionUpdatedAt>=0})
             record.episodes.forEach{it.source?.validate(it.durationMs)}
@@ -134,6 +144,117 @@ class MovieLibrary internal constructor(
     }
     internal fun update(id:String,change:(MovieRecord)->MovieRecord):MovieRecord?=synchronized(storageLock) {
         find(id)?.let{save(change(it))}
+    }
+
+    /** A picker selection saves a local copy. Drive upload requires its own action. */
+    internal suspend fun importMovie(uri: Uri): MovieRecord = withContext(Dispatchers.IO) {
+        require(uri.scheme == "content") { "Chọn video bằng trình chọn tệp của Android." }
+        operation.withLock {
+            val account = currentAccount()
+            val resolver = context.contentResolver
+            val (fileName, expectedBytes) = try {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                    null, null, null)?.use { cursor ->
+                    if (!cursor.moveToFirst()) return@use "" to null
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    val name = if (nameIndex >= 0) cursor.getString(nameIndex).orEmpty() else ""
+                    val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex).takeIf { it > 0 } else null
+                    name to size
+                }
+            } catch (_: UnsupportedOperationException) {
+                null // Some providers only expose the stream.
+            } catch (e: SecurityException) {
+                throw IllegalArgumentException("Không còn quyền đọc video. Hãy chọn lại tệp.", e)
+            } ?: ("" to null)
+            val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) } ?: "input"
+            val title = fileName.substringBeforeLast('.').trim().ifBlank { "Phim đã nhập" }.take(200)
+            val id = UUID.randomUUID().toString()
+            val folder = folder(id)
+            val pending = File(context.cacheDir, "movie-import-$id.$extension")
+            val video = File(folder, "video.$extension")
+            val cover = File(folder, "cover.jpg")
+            var saved = false
+            try {
+                copyImport(uri, pending, expectedBytes)
+                val duration = try {
+                    validateVideo(pending).also { require(it > 0) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: RuntimeException) {
+                    throw IllegalArgumentException("Không phát được tệp đã chọn. Hãy kiểm tra video hoặc định dạng.", e)
+                }
+                currentCoroutineContext().ensureActive()
+                check(pending.renameTo(video)) { "Không thể lưu bản sao vào Kho phim." }
+                try {
+                    makeCover(video, cover)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    cover.delete()
+                }
+                val episode = MovieEpisode(id, title, video.absolutePath, duration, imported = true)
+                val record = MovieRecord(id, title, listOf(episode),
+                    accountEmail = account,
+                    coverPath = cover.takeIf { it.isFile && it.length() > 0 }?.absolutePath.orEmpty(),
+                    message = "Đã nhập từ tệp và lưu trong máy.")
+                currentCoroutineContext().ensureActive()
+                require(currentAccount() == account) { "Tài khoản đã thay đổi. Hãy chọn lại tệp để nhập phim." }
+                save(record).also { saved = true }
+            } catch (e: SecurityException) {
+                throw IllegalArgumentException("Không còn quyền đọc video. Hãy chọn lại tệp.", e)
+            } catch (e: IOException) {
+                throw IllegalArgumentException("Không sao chép được video. Kiểm tra tệp và dung lượng còn trống rồi thử lại.", e)
+            } finally {
+                pending.delete()
+                if (!saved) {
+                    video.delete()
+                    cover.delete()
+                    folder.delete()
+                }
+            }
+        }
+    }
+
+    private suspend fun copyImport(uri: Uri, pending: File, expectedBytes: Long?) {
+        val available = context.cacheDir.usableSpace - 128L * 1024 * 1024
+        require(expectedBytes == null || expectedBytes <= MovieSourceAccess.MAX_BYTES) { "Video vượt 20 GiB." }
+        require(available > 0 && (expectedBytes ?: 0L) <= available) { "Không đủ dung lượng để nhập phim." }
+        val coroutine = currentCoroutineContext()
+        val buffer = ByteArray(128 * 1024)
+        var bytes = 0L
+        val stream = requireNotNull(context.contentResolver.openInputStream(uri)) { "Không đọc được tệp đã chọn." }
+        stream.use { input ->
+            pending.outputStream().use { output ->
+                while (true) {
+                    coroutine.ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    bytes += count
+                    require(bytes <= MovieSourceAccess.MAX_BYTES) { "Video vượt 20 GiB." }
+                    require(bytes <= available) { "Không đủ dung lượng để nhập phim." }
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+        require(bytes > 0) { "Tệp video trống." }
+        require(expectedBytes == null || bytes == expectedBytes) { "Video chưa được sao chép đầy đủ. Hãy chọn lại tệp." }
+    }
+
+    /** Rename the display record only. Read-modify-write shares the progress lock. */
+    suspend fun rename(id:String,name:String):MovieRecord=withContext(Dispatchers.IO) {
+        val clean=movieTitle(name)
+        val saved=requireNotNull(update(id){current->
+            if(current.title==clean) current else {
+                val stamp=maxOf(System.currentTimeMillis(),current.titleUpdatedAt+1,current.updatedAt+1)
+                current.copy(title=clean,titleUpdatedAt=stamp,updatedAt=stamp)
+            }
+        }){"Phim không còn trong tài khoản hiện tại; chưa lưu tên mới."}
+        // Existing durable WorkManager path, metadata only for an already published movie.
+        if(saved.cloudId.isNotBlank()) MovieCloudSync.get(context).enqueueProgress(id,replace=true)
+        else MovieCloudSync.get(context).enqueue(id)
+        saved
     }
 
     suspend fun confirm(id:String,title:String,episodes:List<MovieEpisode>):MovieRecord=withContext(Dispatchers.IO) {
@@ -270,6 +391,41 @@ class MovieLibrary internal constructor(
         }
     }
 
+    internal suspend fun savePlaybackCaption(movieId: String, episodeId: String, revision: String, cueId: String,
+        text: String?, position: Long
+    ): MovieRecord = withContext(Dispatchers.IO) {
+        operation.withLock {
+            val saved = synchronized(storageLock) {
+                val old = requireNotNull(find(movieId)) { "Không tìm thấy phim trong tài khoản hiện tại." }
+                val episode = requireNotNull(old.episodes.firstOrNull { it.id == episodeId })
+                val now = maxOf(System.currentTimeMillis(), old.updatedAt + 1)
+                val revised = reviseMovieCaption(episode, revision, cueId, text, now)
+                if (revised === episode) return@withLock old
+                val changed = revised.copy(positionMs = position.coerceIn(0, episode.durationMs), positionUpdatedAt = now)
+                save(old.copy(episodes = old.episodes.map { if (it.id == episodeId) changed else it },
+                    syncState = "LOCAL", updatedAt = now))
+            }
+            MovieCloudSync.get(context).enqueue(movieId)
+            saved
+        }
+    }
+
+    internal suspend fun reorderEpisodes(movieId: String, order: List<String>): MovieRecord = withContext(Dispatchers.IO) {
+        operation.withLock {
+            val saved = synchronized(storageLock) {
+                val old = requireNotNull(find(movieId)) { "Không tìm thấy phim trong tài khoản hiện tại." }
+                require(order.size == old.episodes.size && order.toSet() == old.episodes.map { it.id }.toSet()) {
+                    "Danh sách tập đã đổi; mở lại để sắp xếp."
+                }
+                val byId = old.episodes.associateBy { it.id }
+                save(old.copy(episodes = order.map(byId::getValue), syncState = "LOCAL",
+                    updatedAt = maxOf(System.currentTimeMillis(), old.updatedAt + 1)))
+            }
+            MovieCloudSync.get(context).enqueue(movieId)
+            saved
+        }
+    }
+
     fun isAvailable(episode:MovieEpisode):Boolean=runCatching {
         if(episode.source==null)episode.path.isNotBlank() && File(episode.path).isFile
         else MovieSourceAccess.open(context,Uri.parse(episode.mediaUri)).use{true}
@@ -344,11 +500,11 @@ class MovieLibrary internal constructor(
                 }
                 if(sourceChanged) {
                     val episodes=p.episodes.map{remote->old.episodes.firstOrNull{it.id==remote.id}?.let{remote.mergeProgress(it)}?:remote}
-                    save(p.copy(accountEmail=account,episodes=episodes,syncState="CLOUD"))
+                    save(p.mergeMovieTitle(old).copy(accountEmail=account,episodes=episodes,syncState="CLOUD"))
                     continue
                 }
                 val episodes=old.episodes.map{episode->p.episodes.firstOrNull{it.id==episode.id}?.let{cloud->episode.mergeProgress(cloud)}?:episode}
-                save(old.copy(cloudId=p.cloudId,updatedAt=maxOf(old.updatedAt,p.updatedAt),episodes=episodes,
+                save(old.mergeMovieTitle(p).copy(cloudId=p.cloudId,updatedAt=maxOf(old.updatedAt,p.updatedAt),episodes=episodes,
                     message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
                         else old.message.takeUnless{it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty()))
             }

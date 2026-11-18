@@ -53,6 +53,13 @@ internal data class VideoDiagnosticCauses(
     val authorization: Long = 0, val quota: Long = 0, val response: Long = 0, val other: Long = 0
 )
 
+internal data class VideoDiagnosticPerformance(
+    val extractMs: Long = 0, val translateMs: Long = 0, val polishMs: Long = 0,
+    val cropMs: Long = 0, val bitmapMs: Long = 0, val ocrMs: Long = 0,
+    val checkpointMs: Long = 0, val refreshMs: Long = 0,
+    val translateRequests: Long = 0, val polishRequests: Long = 0, val exactSourceReuses: Long = 0
+)
+
 /** Only explicitly selected counters reach the UI. Never load project JSON or media. */
 internal data class VideoBatchDiagnosticSnapshot(
     val requestedProjects: Int = 0,
@@ -74,7 +81,8 @@ internal data class VideoBatchDiagnosticSnapshot(
     val requestCapacityCeiling: Long = 0,
     val retryAtMs: Long = 0,
     val updatedMs: Long = 0,
-    val responseFailureReason: Int = 0
+    val responseFailureReason: Int = 0,
+    val performance: VideoDiagnosticPerformance = VideoDiagnosticPerformance()
 )
 
 internal object VideoBatchDiagnostics {
@@ -111,7 +119,20 @@ internal object VideoBatchDiagnostics {
             lastCapacity?.let { counter(it, "request_capacity_ceiling") } ?: 0L,
             rows.maxOfOrNull { maxOf(counter(it, "active_retry_at_ms"), counter(it, "retry_after_ms")) } ?: 0L,
             rows.maxOfOrNull { counter(it, "updated_ms") } ?: 0L,
-            lastFailure?.let { VideoResponseFailureReason.fromId(counter(it, "response_failure_reason").toInt()).id } ?: 0)
+            lastFailure?.let { VideoResponseFailureReason.fromId(counter(it, "response_failure_reason").toInt()).id } ?: 0,
+            VideoDiagnosticPerformance(
+                extractMs = sum("extract_wall_ms"),
+                translateMs = sum("translate_wall_ms"),
+                polishMs = sum("polish_wall_ms"),
+                cropMs = sum("crop_wall_ms"),
+                bitmapMs = sum("bitmap_wall_ms"),
+                ocrMs = sum("ocr_wall_ms"),
+                checkpointMs = sum("checkpoint_wall_ms"),
+                refreshMs = sum("project_refresh_wall_ms"),
+                translateRequests = sum("translate_requests"),
+                polishRequests = sum("polish_requests"),
+                exactSourceReuses = sum("exact_source_reuses")
+            ))
     }
 
     private fun counter(row: JSONObject, name: String): Long = when (val value = row.opt(name)) {

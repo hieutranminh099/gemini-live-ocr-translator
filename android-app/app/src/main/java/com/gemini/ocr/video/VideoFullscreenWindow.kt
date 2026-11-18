@@ -57,7 +57,17 @@ internal fun VideoFullscreenWindow(fullscreen: Boolean, landscape: Boolean) {
 internal class FullscreenPlayerView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : PlayerView(context, attrs) {
     constructor(context: Context, onDoubleTap: () -> Unit) : this(context, null) { this.onDoubleTap = onDoubleTap }
     var onDoubleTap: () -> Unit = {}
+    var onDoubleTapAt: ((Float) -> Unit)? = null
+    var touchLocked = false
+    var onScrubPreview: (Long?) -> Unit = {}
+
     init {
+        findViewById<androidx.media3.ui.DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)
+            ?.addListener(object:androidx.media3.ui.TimeBar.OnScrubListener {
+                override fun onScrubStart(bar:androidx.media3.ui.TimeBar,position:Long){onScrubPreview(position)}
+                override fun onScrubMove(bar:androidx.media3.ui.TimeBar,position:Long){onScrubPreview(position)}
+                override fun onScrubStop(bar:androidx.media3.ui.TimeBar,position:Long,canceled:Boolean){onScrubPreview(null)}
+            })
         controllerAutoShow = false
         controllerShowTimeoutMs = 2500
         controllerHideOnTouch = true
@@ -70,9 +80,16 @@ internal class FullscreenPlayerView @JvmOverloads constructor(context: Context, 
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(event: MotionEvent) = true
         override fun onSingleTapConfirmed(event: MotionEvent): Boolean = performClick()
-        override fun onDoubleTap(event: MotionEvent): Boolean { this@FullscreenPlayerView.onDoubleTap(); return true }
+        override fun onDoubleTap(event: MotionEvent): Boolean {
+            if (touchLocked) return true
+            val seek = onDoubleTapAt
+            if (seek == null) this@FullscreenPlayerView.onDoubleTap()
+            else seek((event.x / width.coerceAtLeast(1)).coerceIn(0f, 1f))
+            return true
+        }
     })
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (touchLocked) return true
         if (!useController) return super.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -94,6 +111,16 @@ internal class FullscreenPlayerView @JvmOverloads constructor(context: Context, 
             MotionEvent.ACTION_CANCEL -> swipeStarted = false
         }
         return gestures.onTouchEvent(event)
+    }
+}
+
+internal fun movieDoubleTapTarget(tap: Float, position: Long, duration: Long): Long? {
+    if (duration <= 0 || tap !in 0f..1f) return null
+    val current = position.coerceIn(0, duration)
+    return when {
+        tap < .45f -> (current - 10_000).coerceAtLeast(0)
+        tap > .55f -> current + minOf(10_000, duration - current)
+        else -> null
     }
 }
 

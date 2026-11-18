@@ -113,6 +113,7 @@ class VideoOcrTailBenchmarkTest {
             val start = System.nanoTime()
             repeat(episodes) { episode ->
                 val tail = if (reuse) VideoOcrTail() else null
+                val sampler = VideoLumaCrop.Sampler(roi, 0)
                 var oldTail: VideoOcrFrame? = null
                 val ring = ArrayDeque<VideoOcrFrame>()
                 var lastSample = -50L
@@ -120,8 +121,8 @@ class VideoOcrTailBenchmarkTest {
                     val ms = index * 1000L / 30
                     val retain = ms - lastSample >= 50
                     val scratch = tail?.reusableLuma(ms, retain)
-                    val frame = VideoLumaCrop.sample(ms, planes[(index + episode) % planes.size],
-                        672, 1, 0, 0, 640, 360, roi, 0, scratch)
+                    val frame = sampler.sample(ms, planes[(index + episode) % planes.size],
+                        672, 1, 0, 0, 640, 360, scratch)
                     if (frame.luma !== scratch) { arrays++; bytes += frame.luma.size }
                     if (tail != null) tail.record(frame, retain)
                     else if (ms > (oldTail?.ms ?: -1)) oldTail = frame

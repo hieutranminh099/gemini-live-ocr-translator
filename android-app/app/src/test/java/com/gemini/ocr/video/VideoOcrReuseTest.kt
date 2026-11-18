@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 class VideoOcrReuseTest {
     private fun frame(ms:Long, bytes:ByteArray=byteArrayOf(1,2,3,4))=VideoOcrFrame(ms,2,2,bytes)
     @Test fun exactUnchangedPixelsReuseButQuorumStillRequiresIndependentObservations() {
-        val reuse=VideoOcrReuse();reuse.record(frame(0),"不是三个\n快走")
+        val reuse=VideoOcrReuse<String>();reuse.record(frame(0),"不是三个\n快走")
         assertNull(reuse.lookup(frame(50),true))
         assertEquals("不是三个\n快走",reuse.lookup(frame(200),false))
         assertNull(reuse.lookup(frame(250,byteArrayOf(1,2,3,5)),false))
@@ -15,7 +15,7 @@ class VideoOcrReuseTest {
         assertNull(reuse.lookup(frame(300),false))
     }
     @Test fun blankCanBeReusedButCannotHideChangedTextOrDimensions() {
-        val reuse=VideoOcrReuse();reuse.record(frame(0),"")
+        val reuse=VideoOcrReuse<String>();reuse.record(frame(0),"")
         assertEquals("",reuse.lookup(frame(200),false))
         assertNull(reuse.lookup(VideoOcrFrame(250,4,1,byteArrayOf(1,2,3,4)),false))
         assertNull(reuse.lookup(frame(250,byteArrayOf(1,2,4,4)),false))

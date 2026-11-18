@@ -138,6 +138,23 @@ class DriveMovieRepositoryTest {
     }
     private fun writer(id:String)=DriveVideoRepository(context,{"offline-test-token"},api=server.url("/drive/v3/"),
         uploadApi=server.url("/upload/drive/v3/"),progressWriterId=id)
+    @Test fun renameUsesMetadataOnlyAndSurvivesOtherDevicesWatching()=runBlocking {
+        val original=movie();val id=repository.publishMovie(original)
+        val stamp=original.updatedAt+10
+        val renamed=original.copy(cloudId=id,title="Tên mới",titleUpdatedAt=stamp,updatedAt=stamp,
+            episodes=original.episodes.map{it.copy(path="")})
+        File(original.episodes.single().path).delete()
+        writer("renamer").publishMovieProgress(renamed)
+        writer("watcher").publishMovieProgress(original.copy(cloudId=id,updatedAt=stamp+50,
+            episodes=original.episodes.map{it.copy(path="",positionMs=500,positionUpdatedAt=stamp+50)}))
+        val merged=repository.listMovies().single()
+        assertEquals("Tên mới",merged.title)
+        assertEquals(stamp,merged.titleUpdatedAt)
+        assertEquals(500L,merged.episodes.single().positionMs)
+        assertEquals(id,merged.cloudId)
+        assertEquals(1,drive.metadata.values.count{it.getJSONObject("appProperties").getString("kind")=="media"})
+        assertEquals(1,drive.metadata.values.count{it.getJSONObject("appProperties").getString("kind")=="movie-manifest"})
+    }
     @Test fun twoDevicesWatchingDifferentEpisodesMergeWithoutDiscardingEitherPosition()=runBlocking {
         val original=movie(2);val id=repository.publishMovie(original)
         val first=original.copy(cloudId=id,updatedAt=original.updatedAt+10,episodes=original.episodes.mapIndexed{i,e->

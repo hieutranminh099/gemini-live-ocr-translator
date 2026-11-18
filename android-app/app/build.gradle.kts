@@ -17,7 +17,8 @@ val verificationTestAppId = providers.gradleProperty("verificationTestAppId").or
 // An explicitly supplied false/misspelled value is rejected instead of silently testing online.
 val verificationOffline = providers.gradleProperty("verificationOffline").orNull?.also {
     require(it == "true") { "verificationOffline accepts only the exact value true; omit it for normal builds" }
-    require(verificationAppId in setOf("com.gemini.ocr.codexbench", "com.gemini.ocr.batchunified186", "com.gemini.ocr.asr187", "com.gemini.ocr.movie189")) {
+    require(verificationAppId in setOf("com.gemini.ocr.codexbench", "com.gemini.ocr.batchunified186",
+        "com.gemini.ocr.asr187", "com.gemini.ocr.movie189", "com.gemini.ocr.subtitles1816", "com.gemini.ocr.playbacktest")) {
         "verificationOffline requires a dedicated fixture package"
     }
 } != null
@@ -28,8 +29,8 @@ android {
         applicationId = "com.gemini.ocr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "1.8.13"
+        versionCode = 43
+        versionName = "1.8.18"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (verificationTestAppId != null) testApplicationId = verificationTestAppId
         manifestPlaceholders["appLabel"] = "Gemini OCR"
@@ -58,7 +59,7 @@ android {
                 "android.permission.INTERNET" else "com.gemini.ocr.codexbench.permission.UNUSED_NETWORK_REMOVAL_MARKER"
             if (verificationAppId != null) {
                 applicationIdSuffix = verificationAppId.removePrefix("com.gemini.ocr")
-                manifestPlaceholders["appLabel"] = "Gemini OCR • Thử"
+                manifestPlaceholders["appLabel"] = "Gemini OCR (Test)"
             }
             if (file("${rootDir}/debug.keystore").exists()) {
                 signingConfig = signingConfigs.getByName("debugConfig")

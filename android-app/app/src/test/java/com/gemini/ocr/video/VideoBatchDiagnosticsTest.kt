@@ -132,6 +132,21 @@ class VideoBatchDiagnosticsTest {
         assertEquals(Long.MAX_VALUE, merged.requests)
     }
 
+    @Test fun phaseMetricsRemainSeparateAndLegacyFilesMayOmitThem() {
+        val legacy = JSONObject().put("requests", 4).put("extract_wall_ms", 600L)
+        val measured = JSONObject().put("extract_wall_ms", 400L).put("translate_wall_ms", 300L)
+            .put("polish_wall_ms", 200L).put("crop_wall_ms", 30L).put("bitmap_wall_ms", 15L)
+            .put("ocr_wall_ms", 75L).put("checkpoint_wall_ms", 10L).put("project_refresh_wall_ms", 5L)
+            .put("translate_requests", 4L).put("polish_requests", 2L).put("exact_source_reuses", 1L)
+        val snapshot = VideoBatchDiagnostics.aggregate(listOf(legacy, measured), 2)
+        assertEquals(4L, snapshot.requests)
+        assertEquals(VideoDiagnosticPerformance(
+            extractMs = 1000L, translateMs = 300L, polishMs = 200L,
+            cropMs = 30L, bitmapMs = 15L, ocrMs = 75L, checkpointMs = 10L, refreshMs = 5L,
+            translateRequests = 4L, polishRequests = 2L, exactSourceReuses = 1L
+        ), snapshot.performance)
+    }
+
     @Test fun simultaneousReadersAndAtomicWritersDoNotRestoreAnInProgressBackup() {
         val path = file(newId())
         VideoMetricFile.write(path, JSONObject().put("requests", 0))

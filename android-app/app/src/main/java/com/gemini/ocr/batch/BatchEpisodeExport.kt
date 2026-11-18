@@ -28,10 +28,10 @@ internal object BatchEpisodeExport {
         return when (project.translationMode) {
             // HYBRID already receives contextual Gemini translations at TRANSLATE.
             VideoTranslationMode.HYBRID -> true
-            VideoTranslationMode.GEMINI -> project.cues.none(VideoStagedPipeline::needsPolish)
+            VideoTranslationMode.GEMINI -> project.cues.none { VideoStagedPipeline.needsPolish(project, it) }
             VideoTranslationMode.OFFLINE -> when (project.offlinePolishPolicy) {
                 VideoPolishPolicy.NONE -> true
-                VideoPolishPolicy.FLAGGED -> project.cues.none(VideoStagedPipeline::needsPolish)
+                VideoPolishPolicy.FLAGGED -> project.cues.none { VideoStagedPipeline.needsPolish(project, it) }
                 VideoPolishPolicy.ALL -> project.cues.all { it.protectedText || it.polishedVi.isNotBlank() }
             }
         }

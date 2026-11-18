@@ -26,6 +26,16 @@ class BatchStore(context: Context) {
         require(atomic.baseFile.length() <= 32L * 1024 * 1024)
         BatchProject.from(JSONObject(atomic.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })).also { require(it.id == id) }
     }
+    /** Remove the batch record only. Episode projects and exported files may be used elsewhere. */
+    internal fun deleteDraft(id: String) = synchronized(lock) {
+        val folder = folder(id)
+        val record = File(folder, "batch.json")
+        AtomicFile(record).delete()
+        check(!record.exists() && !File(folder, "batch.json.bak").exists()) {
+            "Chưa xóa được dự án trên thiết bị. Hãy thử lại."
+        }
+        folder.delete() // Only removes an empty directory.
+    }
     fun list(): List<BatchProject> = synchronized(lock) {
         directory.listFiles().orEmpty().filter { it.isDirectory && it.name.matches(Regex("[a-f0-9-]{36}")) }
             .mapNotNull { runCatching { load(it.name) }.getOrNull() }.sortedByDescending { it.updatedAt }

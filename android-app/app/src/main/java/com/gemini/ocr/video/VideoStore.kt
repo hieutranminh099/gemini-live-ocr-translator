@@ -5,6 +5,9 @@ import android.net.Uri
 import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 /** All source handles belong to an explicit document selection; source media is never overwritten. */
@@ -91,11 +94,31 @@ class VideoStore(context: Context) {
         require(extension in setOf("srt","ass","mp4","partial.mp4"))
         return File(folder(id),"translated.$extension")
     }
+    internal fun writeSubtitle(id: String, name: String, text: String) {
+        require(name in setOf("source.zh.srt", "translated.srt", "translated.ass"))
+        val destination = File(folder(id), name)
+        val temporary = File.createTempFile("subtitle-", ".partial", destination.parentFile)
+        try {
+            FileOutputStream(temporary).use { stream ->
+                stream.write(text.toByteArray(Charsets.UTF_8))
+                stream.fd.sync()
+            }
+            publishVideoArtifact(temporary, destination)
+        } finally {
+            temporary.delete()
+        }
+    }
     companion object {
         // AtomicFile is not thread safe: UI, video service and cloud workers use separate stores.
         // A process-wide lock prevents openRead() recovering a backup while another instance writes.
         private val persistenceLock=Any()
     }
+}
+
+/** Only completed files are published. A failed move leaves the previous complete version readable. */
+internal fun publishVideoArtifact(temporary: File, destination: File) {
+    require(temporary.parentFile == destination.parentFile)
+    Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
 }
 
 data class VideoMetadata(val durationMs:Long,val width:Int,val height:Int,val rotation:Int=0,val hasAudio:Boolean=false)

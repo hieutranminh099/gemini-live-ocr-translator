@@ -60,9 +60,25 @@ class VideoJobs internal constructor(
     init { if(batchParent==null){refresh();scope.launch{checkOffline()}} }
     @Synchronized fun refresh(){
         batchParent?.let { it.refresh();return }
-        mutableProjects.value=store.list().map { p ->
-        if(p.id!=busy.value && p.id !in mutableParallelProjects.value && p.stage in ACTIVE_STAGES) p.copy(stage=VideoStage.PAUSED,message="Đã lưu checkpoint. Bấm Tiếp tục sau khi mở lại.") else p
-    }}
+        mutableProjects.value=store.list().map(::visibleProject)
+    }
+    private fun visibleProject(project: VideoProject): VideoProject =
+        if (project.id != busy.value && project.id !in mutableParallelProjects.value && project.stage in ACTIVE_STAGES)
+            project.copy(stage = VideoStage.PAUSED, message = "Đã lưu checkpoint. Bấm Tiếp tục sau khi mở lại.")
+        else project
+
+    @Synchronized private fun publishCheckpoint(project: VideoProject) {
+        batchParent?.let { it.publishCheckpoint(project); return }
+        // The store has already committed this version. Keep the same newest-first ordering
+        // as refresh() while leaving unrelated timelines in memory.
+        val rows = mutableProjects.value
+        val visible = visibleProject(project)
+        val otherRows = rows.filterNot { it.id == project.id }
+        val index = otherRows.indexOfFirst { it.updatedAt <= visible.updatedAt }
+        mutableProjects.value = otherRows.toMutableList().apply {
+            add(if (index < 0) size else index, visible)
+        }
+    }
     private suspend fun checkOffline(){mutableOffline.value=runCatching {
         if(VideoOfflineTranslator.ready())"Model Trung → Việt đã sẵn sàng; có thể tắt mạng." else "Chưa có đủ model. Bấm Chuẩn bị offline khi có mạng."
     }.getOrElse{"Chưa kiểm tra được model: ${it.javaClass.simpleName}"}}
@@ -324,7 +340,10 @@ class VideoJobs internal constructor(
                         else VideoProfileStage.forWorker(pipelineStage, intended)
                     profiler?.checkpoint(nextProfileStage, info.totalPss.toLong())
                 }
-                timingStage=intended;lastTick=now;refresh()
+                timingStage=intended;lastTick=now
+                val refreshAt = System.nanoTime()
+                publishCheckpoint(p)
+                runCatching { smartMetrics.add("project_refresh_wall_ms", (System.nanoTime() - refreshAt) / 1_000_000L) }
             }
             suspend fun gate(){
                 currentCoroutineContext().ensureActive()
@@ -354,11 +373,11 @@ class VideoJobs internal constructor(
                         message="Đang tự khôi phục, tiến độ đã được lưu."))
                 }
             }
-            suspend fun dispatchCheckpoint(){
+            suspend fun dispatchCheckpoint(message: String? = null){
                 runCatching { VideoApiRecovery.currentCapacity()?.let { smartMetrics.capacity(it.limit, it.ceiling) } }
                 if(pipelineStage!=null){
                     val old=p.pipeline.task(pipelineStage)
-                    persist(p.copy(cloudCalls=p.cloudCalls+1,pipeline=p.pipeline.copy(stages=p.pipeline.stages+
+                    persist(p.copy(cloudCalls=p.cloudCalls+1,message=message ?: p.message,pipeline=p.pipeline.copy(stages=p.pipeline.stages+
                         (pipelineStage to old.copy(status="RUNNING",nextRetryAt=0,errorCode="")))))
                 }else persist(p.copy(cloudCalls=p.cloudCalls+1))
             }
@@ -371,7 +390,7 @@ class VideoJobs internal constructor(
                         gate()
                         val asrAvailable = p.speech.optBoolean("complete") || ChineseAsrModels(context).status().ready
                         val cleaned=VideoTimeline.validate(VideoStagedPipeline.clean(p.cues,asrAvailable),p.durationMs)
-                        File(store.folder(id),"source.zh.srt").writeText(VideoStagedPipeline.sourceSrt(cleaned,durationMs=p.durationMs),Charsets.UTF_8)
+                        store.writeSubtitle(id, "source.zh.srt", VideoStagedPipeline.sourceSrt(cleaned, durationMs = p.durationMs))
                         persist(p.copy(cues=cleaned,stage=VideoStage.REVIEW,progress=100,
                             pipeline=p.pipeline.record(pipelineStage,"COMPLETE",cleaned.size.toLong()).copy(asrStatus=if(p.speech.optBoolean("complete"))"COMPLETE" else if(asrAvailable)"AVAILABLE" else "UNAVAILABLE",
                                 contextProfile=p.pipeline.contextProfile.ifBlank{VideoStagedPipeline.contextProfile(p)}),
@@ -403,7 +422,7 @@ class VideoJobs internal constructor(
                         val failedPolishIds = mutableSetOf<String>()
                         fun isTarget(cue: VideoCue) = if (offlinePolicy == VideoPolishPolicy.ALL)
                             !cue.protectedText && cue.translation.isNotBlank() && cue.polishedVi.isBlank()
-                            else VideoStagedPipeline.needsPolish(cue)
+                            else VideoStagedPipeline.needsPolish(p, cue)
                         fun markPending(cue: VideoCue, message: String): VideoCue = cue.copy(
                             qualityFlags = (cue.qualityFlags + if (optedIn) "POLISH_PENDING" else "POLISH_NEEDS_REVIEW").distinct(),
                             error = message)
@@ -421,7 +440,10 @@ class VideoJobs internal constructor(
                                     p.profile, p.glossary, onRetry = ::retryCheckpoint, allowPartial = optedIn) {
                                     gate(); smartMetrics.requireQuotaReady(); dispatchCheckpoint()
                                     dispatched = true
-                                    runCatching { smartMetrics.dispatch(batch.indices.size, false) }
+                                    runCatching {
+                                        smartMetrics.add("polish_requests")
+                                        smartMetrics.dispatch(batch.indices.size, false)
+                                    }
                                 }
                                 runCatching { smartMetrics.response(outcome) }
                                 val accepted = batch.cueIds.indices.filter { batch.cueIds[it] in outcome.accepted }
@@ -471,8 +493,8 @@ class VideoJobs internal constructor(
                     if(pipelineStage==BatchPipelineStage.FINISH){
                         require(p.cues.all{VideoTranslationPlan.isComplete(it,p.translationMode==VideoTranslationMode.HYBRID)}){"Còn câu chưa dịch; chưa đánh dấu hoàn tất."}
                         VideoTimeline.validate(p.cues,p.durationMs)
-                        store.exportFile(id,"srt").writeText(VideoTimeline.srt(p.cues,p.durationMs),Charsets.UTF_8)
-                        store.exportFile(id,"ass").writeText(VideoTimeline.ass(p),Charsets.UTF_8)
+                        store.writeSubtitle(id, "translated.srt", VideoTimeline.srt(p.cues, p.durationMs))
+                        store.writeSubtitle(id, "translated.ass", VideoTimeline.ass(p))
                         persist(p.copy(stage=VideoStage.REVIEW,progress=100,pipeline=p.pipeline.record(pipelineStage,"COMPLETE",p.cues.size.toLong()),
                             message="Đã lưu phụ đề. Kiểm tra các câu được đánh dấu rồi xác nhận xuất hoặc lưu Kho phim."))
                         return@launch
@@ -491,8 +513,7 @@ class VideoJobs internal constructor(
                     }
                     val final=store.exportFile(id,"mp4")
                     // The only replacement is this project's generated output; source URI is untouched.
-                    if(final.exists())check(final.delete()){"Không thể thay bản xuất cũ."}
-                    check(output.renameTo(final)){"Không thể hoàn tất MP4."}
+                    publishVideoArtifact(output, final)
                     persist(p.copy(stage=VideoStage.COMPLETE,progress=100,exportedMp4=final.absolutePath,message="Đã tạo MP4. Bấm Lưu MP4 để chọn thư mục."))
                 } else {
                     val hybrid=p.translationMode==VideoTranslationMode.HYBRID
@@ -508,11 +529,19 @@ class VideoJobs internal constructor(
                         gate();persist(p.copy(stage=intended,message="Đang lấy phụ đề nguồn…"))
                         suspend fun readOcr(forceLocal:Boolean=false): List<VideoCue> {
                                 val visual=!forceLocal && pipelineStage==null && p.translationMode==VideoTranslationMode.GEMINI
+                                val duplicate = if (pipelineStage == BatchPipelineStage.EXTRACT)
+                                    VideoBatchOcrReuse.prepare(context, p, ::gate) else null
+                                duplicate?.cues?.let { rows ->
+                                    p = p.copy(ocrMetrics = org.json.JSONObject().put("exact_source_reuses", 1))
+                                    return rows
+                                }
+                                var decoderReopened = false
                                 val checkpoint:suspend(Long,List<VideoCue>,org.json.JSONObject)->Unit={ms,rows,carry->persist(p.copy(scanMs=ms,cues=rows,carry=carry,
                                     ocrMetrics=carry.optJSONObject("metrics")?:p.ocrMetrics,progress=(ms*100/p.durationMs).toInt(),
                                     message="${if(visual)"Gemini đang đọc ảnh vùng chữ" else "Đang OCR offline vùng chữ"}: ${ms/1000}/${p.durationMs/1000} giây"))}
-                                return if(visual)VideoVisualDecoder.scan(context,p,::gate,{gate();persist(p.copy(cloudCalls=p.cloudCalls+1))},checkpoint)
+                                val rows = if(visual)VideoVisualDecoder.scan(context,p,::gate,{gate();persist(p.copy(cloudCalls=p.cloudCalls+1))},checkpoint)
                                 else if(forceLocal || pipelineStage==BatchPipelineStage.EXTRACT || hybrid)VideoDecodeRecovery.run(onRetry={attempt,error->
+                                    decoderReopened = true
                                     gate()
                                     val stage=BatchPipelineStage.EXTRACT;val old=p.pipeline.task(stage)
                                     persist(p.copy(pipeline=if(pipelineStage==stage)p.pipeline.copy(stages=p.pipeline.stages+(stage to old.copy(
@@ -530,6 +559,8 @@ class VideoJobs internal constructor(
                                     VideoDecoder.scanDrafts(context,p,::gate,checkpoint)
                                 }
                                 else VideoDecoder.scan(context,p,::gate,checkpoint)
+                                if (!decoderReopened) duplicate?.record(rows, ::gate)
+                                return rows
                         }
                         suspend fun readSpeech(): List<VideoCue> {
                             gate()
@@ -599,14 +630,14 @@ class VideoJobs internal constructor(
                     if(hybrid){
                         require(!VideoHybridWorkflow.requiresExtraction(p)){"Chưa lấy hết phụ đề nguồn; tiếp tục quét trước khi gửi Gemini."}
                         val ordered=VideoTimeline.validate(p.cues,p.durationMs)
-                        File(store.folder(id),"source.zh.srt").writeText(VideoStagedPipeline.sourceSrt(ordered,true,p.durationMs),Charsets.UTF_8)
+                        store.writeSubtitle(id, "source.zh.srt", VideoStagedPipeline.sourceSrt(ordered, true, p.durationMs))
                         if(ordered!=p.cues)persist(p.copy(cues=ordered))
                     }
                     val waitForTranslationTools = pipelineStage==null && p.sourceMode in setOf(VideoSourceMode.AUTO,VideoSourceMode.ASR) &&
                         ((p.translationMode==VideoTranslationMode.OFFLINE && !VideoOfflineTranslator.ready()) ||
                             (p.translationMode!=VideoTranslationMode.OFFLINE && !AppSettings(context).hasGeminiVideoKey()))
                     if(pipelineStage==BatchPipelineStage.EXTRACT || waitForTranslationTools || (pipelineStage==null && p.speech.optBoolean("noSpeech"))){
-                        File(store.folder(id),"source.zh.srt").writeText(VideoStagedPipeline.sourceSrt(p.cues,true,p.durationMs),Charsets.UTF_8)
+                        store.writeSubtitle(id, "source.zh.srt", VideoStagedPipeline.sourceSrt(p.cues, true, p.durationMs))
                         persist(p.copy(stage=VideoStage.REVIEW,progress=100,pipeline=if(pipelineStage==null)p.pipeline else p.pipeline.record(pipelineStage,"COMPLETE",p.scanMs),
                             message=if(p.speech.optBoolean("noSpeech"))"Không phát hiện lời nói hoặc phụ đề hợp lệ; không tạo câu giả. Kiểm tra âm thanh/vùng chữ nếu bạn vẫn nghe thấy thoại."
                                 else "Đã lưu ${p.cues.size} câu nguồn và mốc thời gian. ${if(waitForTranslationTools)"Chuẩn bị công cụ dịch rồi bấm Tiếp tục; không phải nhận diện lại." else "Chưa gửi câu nào để dịch."}"))
@@ -663,6 +694,9 @@ class VideoJobs internal constructor(
                         val groupSize=VideoSmartBatchSettings(context).groupSize
                         var recoveryGroupLimit=if (pipelineStage == BatchPipelineStage.TRANSLATE &&
                             previousStageError in setOf("TEXT_INCOMPLETE_RESPONSE", "TEXT_TRUNCATED")) maxOf(1, groupSize / 2) else groupSize
+                        val adaptiveGroup = if (pipelineStage == BatchPipelineStage.TRANSLATE &&
+                            p.sourceMode == VideoSourceMode.OCR && p.translationMode == VideoTranslationMode.GEMINI &&
+                            economy == null) VideoAdaptiveTextGroups(groupSize, recoveryGroupLimit) else null
                         var failedCloudIds=emptySet<String>()
                         var splitRetriedIds=emptySet<String>()
                         if(p.translationMode!=VideoTranslationMode.OFFLINE)while(true){
@@ -671,10 +705,11 @@ class VideoJobs internal constructor(
                             val selectedBatch=if(hybrid)VideoFullDialoguePlan.next(p.cues,p.durationMs,p.pipeline.contextProfile,hybridTargetLimit){candidate->
                                 runCatching{VideoTranslationClient.buildRequest(candidate,p.profile,p.glossary)}.isSuccess
                             }?:break
-                                else pendingRepair?:VideoTranslationPlan.nextCloudBatch(pendingCues,false,maxCues=recoveryGroupLimit)?:break
-                            val batch=if(pipelineStage!=null && !hybrid)VideoStagedPipeline.withContext(selectedBatch,p.pipeline.contextProfile)else selectedBatch
+                                else pendingRepair?:VideoTranslationPlan.nextCloudBatch(pendingCues,false,maxCues=adaptiveGroup?.limit ?: recoveryGroupLimit)?:break
+                            val contextualBatch=if(pipelineStage!=null && !hybrid)VideoStagedPipeline.withContext(selectedBatch,p.pipeline.contextProfile)else selectedBatch
+                            val batch=if(adaptiveGroup!=null)VideoTranslationClient.withCompactTargets(contextualBatch)else contextualBatch
                             pendingRepair=null
-                            val reviewed=if(repairing)null else batchReviewedMemory.lookup(p,batch)
+                            val reviewed=if(repairing)null else batchReviewedMemory.lookup(p,contextualBatch)
                             if(reviewed!=null){
                                 val selected=VideoTranslationPlan.selectBatch(batch,reviewed.positions)
                                 val updated=VideoTranslationPlan.applyCloudResult(p.cues,selected,reviewed.translations,reviewed.scope.modelVersion,hybrid,p.glossary)
@@ -692,15 +727,19 @@ class VideoJobs internal constructor(
                                     message="Đã dùng bản dịch khớp nguyên văn và ngữ cảnh trong dự án hàng loạt."))
                                 continue
                             }
-                            persist(p.copy(stage=VideoStage.TRANSLATING,
-                                message=if(hybrid)"Đã quét nguồn 100%. Gemini đang dịch phần ${batch.cueIds.size} câu, trong ${p.cues.count{!VideoTranslationPlan.isComplete(it,true)}} câu còn thiếu. Tự chọn phần lớn nhất vừa giới hạn…"
-                                    else "${if(repairing)"Gemini đang sửa ký tự lạ trong" else "Gemini dịch"} câu ${batch.indices.first()+1}–${batch.indices.last()+1}/${p.cues.size}…"))
+                            val requestMessage = if(hybrid)"Đã quét nguồn 100%. Gemini đang dịch phần ${batch.cueIds.size} câu, trong ${p.cues.count{!VideoTranslationPlan.isComplete(it,true)}} câu còn thiếu. Tự chọn phần lớn nhất vừa giới hạn…"
+                                else "${if(repairing)"Gemini đang thử lại" else "Gemini dịch"} câu ${batch.indices.first()+1}–${batch.indices.last()+1}/${p.cues.size}…"
+                            if (adaptiveGroup == null || p.stage != VideoStage.TRANSLATING)
+                                persist(p.copy(stage=VideoStage.TRANSLATING,message=requestMessage))
                             try {
                                 suspend fun request():VideoTranslationClient.Result {
                                     val dispatch:suspend()->Unit={
                                     gate();smartMetrics.requireQuotaReady()
-                                    dispatchCheckpoint()
-                                    runCatching{smartMetrics.dispatch(batch.indices.size,repairing)}
+                                    dispatchCheckpoint(requestMessage.takeIf { adaptiveGroup != null })
+                                    runCatching {
+                                        if (pipelineStage == BatchPipelineStage.TRANSLATE) smartMetrics.add("translate_requests")
+                                        smartMetrics.dispatch(batch.indices.size,repairing)
+                                    }
                                     }
                                     return if(economy!=null)economy.translate(AppSettings(context).effectiveStandaloneApiKey(),batch,p.profile,p.glossary,dispatch)
                                     else textClient.translate(AppSettings(context).effectiveStandaloneApiKey(),batch,p.profile,p.glossary,onRetry=::retryCheckpoint,beforeDispatch=dispatch)
@@ -731,6 +770,7 @@ class VideoJobs internal constructor(
                                     persist(p.copy(cues=updated,model=outcome.model,pipeline=recoveredPipeline,
                                         progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size))
                                     if(!repairing)runCatching{batchCache.save(p,batch,accepted,outcome.model)}
+                                    if(!repairing)adaptiveGroup?.complete(batch.cueIds.size)
                                     economy?.acknowledge()
                                 } else {
                                     // Persist valid IDs before planning any smaller request.
@@ -764,7 +804,10 @@ class VideoJobs internal constructor(
                                     // One bounded retry for only missing/invalid IDs. Never replay successful rows,
                                     // an HTTP failure, auth/quota failure, timeout or an ambiguous ID response.
                                     delay(500L+kotlin.random.Random.nextLong(251L));gate()
-                                    pendingRepair=VideoTranslationPlan.repairBatch(p.cues,batch,bad,hybrid)
+                                    if (outcome.truncated || bad.size * 5 >= batch.cueIds.size)
+                                        adaptiveGroup?.reduce(batch.cueIds.size)
+                                    else adaptiveGroup?.complete(0)
+                                    pendingRepair=VideoTranslationPlan.repairBatch(p.cues,batch,bad.take(adaptiveGroup?.limit ?: bad.size),hybrid)
                                 }
                             }catch(e:VideoEconomyPendingException){throw e}
                             catch(e:CancellationException){throw e}
@@ -790,6 +833,7 @@ class VideoJobs internal constructor(
                                     !(e is VideoApiException && (e.transient || e.code=="API_AUTH" || e.code=="API_QUOTA_EXHAUSTED" || e.code=="API_RATE_LIMIT" || e.nextRetryAt>0))){
                                     if(e is VideoApiException && e.splitAllowed && batch.indices.size>1 && batch.cueIds.none{it in splitRetriedIds}){
                                         splitRetriedIds=splitRetriedIds+batch.cueIds;recoveryGroupLimit=maxOf(1,batch.indices.size/2)
+                                        adaptiveGroup?.reduce(batch.cueIds.size)
                                         persist(p.copy(message="Đang chia nhỏ nhóm chưa hợp lệ; các câu đã lưu được giữ."))
                                     }else {
                                         // Preserve a manual error if independent groups failed for different reasons.
@@ -829,8 +873,8 @@ class VideoJobs internal constructor(
                             message="Đã lưu bản dịch nháp theo từng nhóm. Tiếp theo kiểm tra và hiệu đính."))
                         return@launch
                     }
-                    val srt=store.exportFile(id,"srt");srt.writeText(VideoTimeline.srt(p.cues,p.durationMs),Charsets.UTF_8)
-                    store.exportFile(id,"ass").writeText(VideoTimeline.ass(p),Charsets.UTF_8)
+                    store.writeSubtitle(id, "translated.srt", VideoTimeline.srt(p.cues, p.durationMs))
+                    store.writeSubtitle(id, "translated.ass", VideoTimeline.ass(p))
                     persist(p.copy(stage=VideoStage.REVIEW,progress=100,message=when(p.translationMode){
                         VideoTranslationMode.OFFLINE->"Đã dịch offline ${p.cues.size} câu dưới dạng Draft. Kiểm tra chữ Trung, tên, xưng hô và phủ định trước khi tải xuống."
                         VideoTranslationMode.GEMINI->"Gemini đã dịch ${p.cues.size} câu theo ngữ cảnh. Bản dịch vẫn là Draft; kiểm tra chữ Trung nguồn trước khi tải xuống."

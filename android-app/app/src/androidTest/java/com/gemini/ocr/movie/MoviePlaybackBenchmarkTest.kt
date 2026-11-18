@@ -1,0 +1,254 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+package com.gemini.ocr.movie
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.ui.DefaultTimeBar
+import androidx.media3.ui.TimeBar
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
+import com.gemini.ocr.MainActivity
+import com.gemini.ocr.BuildConfig
+import com.gemini.ocr.video.*
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+
+@RunWith(AndroidJUnit4::class)
+class MoviePlaybackBenchmarkTest {
+    private val ins get()=InstrumentationRegistry.getInstrumentation()
+    private fun main(block:()->Unit)=ins.runOnMainSync(block)
+    private fun waitFor(label:String, timeout:Long=15_000, predicate:()->Boolean) {
+        val until=SystemClock.elapsedRealtime()+timeout
+        while(!predicate()) { check(SystemClock.elapsedRealtime()<until){"Timeout: $label"}; Thread.sleep(10) }
+    }
+    private fun views(view:View):List<View> = listOf(view)+ if(view is ViewGroup)
+        (0 until view.childCount).flatMap{views(view.getChildAt(it))} else emptyList()
+
+    @Test fun renameAndLatestEpisode():Unit=runBlocking {
+        val context=ins.targetContext
+        require(context.packageName=="com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
+        val folder=File(context.getExternalFilesDir(null),"playback-bench")
+        val report=JSONObject().put("completed",false)
+        val library=MovieLibrary.get(context)
+        val original=library.movies.value.first{it.episodes.size==3}
+        library.save(original.copy(title="Rename Fixture"))
+        library.progress(original.id,original.episodes[0].id,9000)
+        val before=library.find(original.id)!!
+        val device=UiDevice.getInstance(ins)
+        var screen:ActivityScenario<MainActivity>?=null
+        var playerScreen:ActivityScenario<MoviePlaybackActivity>?=null
+        try {
+            screen=ActivityScenario.launch(Intent(context,MainActivity::class.java).putExtra("ux_tab",2))
+            val search=checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")),8000))
+            search.text="Rename Fixture"
+            repeat(4){ if(!device.hasObject(By.desc("Tùy chọn phim")))device.swipe(device.displayWidth/2,device.displayHeight*3/4,device.displayWidth/2,device.displayHeight/3,20) }
+            fun openRename() {
+                checkNotNull(device.wait(Until.findObject(By.desc("Tùy chọn phim")),5000)).click()
+                checkNotNull(device.wait(Until.findObject(By.text("Đổi tên phim")),3000)).click()
+            }
+            openRename()
+            val field=device.findObjects(By.clazz("android.widget.EditText")).last()
+            assertEquals("Rename Fixture",field.text)
+            field.text="   "
+            device.findObject(By.text("Lưu")).click()
+            assertTrue(device.wait(Until.hasObject(By.text("Tên phim không được để trống.")),3000))
+            device.findObject(By.text("Hủy")).click()
+            assertEquals("Rename Fixture",library.find(before.id)!!.title)
+            openRename()
+            device.findObjects(By.clazz("android.widget.EditText")).last().text="  Phim đổi tên thử  "
+            device.findObject(By.text("Lưu")).click()
+            waitFor("rename persisted"){library.find(before.id)?.title=="Phim đổi tên thử"}
+            device.findObject(By.clazz("android.widget.EditText")).text="Phim đổi tên thử"
+            assertTrue(device.wait(Until.hasObject(By.text("Phim đổi tên thử")),5000))
+            val renamed=library.find(before.id)!!
+            assertEquals(before.episodes,renamed.episodes)
+            assertEquals(before.cloudId,renamed.cloudId)
+            assertEquals("Phim đổi tên thử",MovieLibrary(context).find(before.id)!!.title)
+            report.put("rename_prefill_cancel_blank_trim_search_persistence",true)
+            screen.close();screen=null
+
+            val active=AtomicReference<Pair<String,ExoPlayer>?>(null)
+            val ready=ConcurrentHashMap.newKeySet<Player>()
+            VideoPreviewDiagnostics.onPlayerForTest={id,p->if(p is ExoPlayer){active.set(id to p);p.addListener(object:Player.Listener{
+                override fun onRenderedFirstFrame(){ready.add(p)}
+            })}}
+            playerScreen=ActivityScenario.launch(Intent(context,MoviePlaybackActivity::class.java)
+                .putExtra("movie",before.id).putExtra("episode",before.episodes[0].id))
+            waitFor("resume"){active.get()?.let{it.second in ready}==true}
+            main{active.get()!!.second.pause();assertTrue(kotlin.math.abs(active.get()!!.second.currentPosition-9000)<600)}
+            assertTrue(device.hasObject(By.text("Phim đổi tên thử")))
+            report.put("resume_and_player_title",true)
+            // Three navigation choices before source I/O has time to finish: final choice must win.
+            playerScreen.onActivity { a ->
+                val view=views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
+                val navigate=checkNotNull(view.onEpisodeSwipe)
+                assertTrue(navigate(1));assertTrue(navigate(1));assertTrue(navigate(-1))
+            }
+            waitFor("latest episode wins"){active.get()?.let{it.first==before.episodes[1].id && it.second in ready}==true}
+            main{active.get()!!.second.pause()}
+            report.put("rapid_next_next_previous",true)
+            playerScreen.onActivity { a->views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single().onDoubleTap() }
+            assertTrue(device.wait(Until.hasObject(By.desc("Thoát toàn màn hình")),3000) || !device.hasObject(By.text("Về Kho phim")))
+            device.pressBack()
+            report.put("fullscreen_back",true)
+            device.takeScreenshot(File(folder,"renamed-player.png"))
+            File(folder,"persisted-fixture.json").writeText(JSONObject().put("movie",before.id).put("episode",before.episodes[0].id).toString())
+            report.put("completed",true)
+        }catch(t:Throwable){report.put("error",t.stackTraceToString());throw t}
+        finally{
+            playerScreen?.close();screen?.close();VideoPreviewDiagnostics.onPlayerForTest=null
+            File(folder,"rename.json").writeText(report.toString(2))
+        }
+    }
+
+    @Test fun measuredPlayback():Unit=runBlocking {
+        val context=ins.targetContext
+        require(context.packageName=="com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
+        assertEquals(PackageManager.PERMISSION_DENIED,context.checkSelfPermission(Manifest.permission.INTERNET))
+        val folder=File(context.getExternalFilesDir(null),"playback-bench").apply{mkdirs()}
+        val variant=InstrumentationRegistry.getArguments().getString("variant") ?: "baseline"
+        val output=File(folder,"$variant.json")
+        val report=JSONObject().put("completed",false).put("variant",variant)
+        val runs=JSONArray();report.put("runs",runs)
+        val trace=CopyOnWriteArrayList<JSONObject>()
+        MoviePlaybackTrace.observer={stage,ns->trace.add(JSONObject().put("stage",stage).put("ns",ns))}
+        val library=MovieLibrary.get(context)
+        val fixture=File(folder,"playback.mp4");require(fixture.isFile)
+        val owned=File(context.filesDir,"playback-fixture.mp4")
+        fixture.copyTo(owned,true)
+        val metadata=VideoDecoder.metadata(context,Uri.fromFile(owned))
+        val fingerprint=MovieSourceAccess.inspect(context,Uri.fromFile(owned))
+        report.put("fixture_sha256",fingerprint.first).put("fixture_bytes",fingerprint.second)
+        val movieId=UUID.randomUUID().toString()
+        val episodes=(1..3).map { n ->
+            val id=UUID.randomUUID().toString()
+            val p=VideoProject(id,"Tập $n",Uri.fromFile(owned).toString(),metadata.durationMs,metadata.width,metadata.height,
+                cues=(0..11).map{VideoCue("cue-$it",it*2000L,it*2000L+1500,"字幕$it","Câu $it",approved=true)},
+                style=VideoSubtitleStyle(blurOriginal=false), stage=VideoStage.REVIEW,
+                scanMs=metadata.durationMs,resumeStage=VideoStage.TRANSLATING)
+            MovieEpisode(id,p.title,owned.path,p.durationMs,source=MovieSourceSnapshot.freeze(p,fingerprint.first,fingerprint.second,p.uri))
+        }
+        library.save(MovieRecord(movieId,"Phim kiểm thử",episodes))
+        val active=AtomicReference<Pair<String,ExoPlayer>?>(null)
+        val rendered=ConcurrentHashMap<Player,Long>()
+        val frames=ConcurrentHashMap<Player,Pair<Long,Long>>()
+        val drops=AtomicLong()
+        val observed=AtomicReference<VideoPreviewFrame?>()
+        val subtitleUpdates=AtomicLong()
+        VideoPreviewDiagnostics.onFrameForTest={observed.set(it);subtitleUpdates.incrementAndGet()}
+        VideoPreviewDiagnostics.onPlayerForTest={id,player->
+            if(player is ExoPlayer) {
+                active.set(id to player)
+                player.addListener(object:Player.Listener {
+                    override fun onRenderedFirstFrame(){rendered[player]=SystemClock.elapsedRealtimeNanos()}
+                })
+                player.addAnalyticsListener(object:AnalyticsListener {
+                    override fun onDroppedVideoFrames(eventTime:AnalyticsListener.EventTime,droppedFrames:Int,elapsedMs:Long){drops.addAndGet(droppedFrames.toLong())}
+                })
+                player.setVideoFrameMetadataListener { pts,_,_,_-> frames[player]=pts/1000 to SystemClock.elapsedRealtimeNanos() }
+            }
+        }
+        var scenario:ActivityScenario<MoviePlaybackActivity>?=null
+        try {
+            repeat(5) { round ->
+                library.progress(movieId,episodes[0].id,0)
+                active.set(null)
+                val start=SystemClock.elapsedRealtimeNanos()
+                scenario=ActivityScenario.launch(Intent(context,MoviePlaybackActivity::class.java)
+                    .putExtra("movie",movieId).putExtra("episode",episodes[0].id))
+                waitFor("opening first frame"){active.get()?.second?.let{rendered.containsKey(it)}==true}
+                val row=JSONObject().put("round",round+1).put("open_ns",rendered[active.get()!!.second]!!-start)
+                runs.put(row)
+                val cpuStart=android.os.Process.getElapsedCpuTime()
+                val updateStart=subtitleUpdates.get()
+                val dwellStart=SystemClock.elapsedRealtime()
+                Thread.sleep(2000)
+                row.put("playing_wall_ms",SystemClock.elapsedRealtime()-dwellStart)
+                    .put("playing_cpu_ms",android.os.Process.getElapsedCpuTime()-cpuStart)
+                    .put("subtitle_update_callbacks",subtitleUpdates.get()-updateStart)
+                val seeks=JSONArray();row.put("seeks",seeks)
+                for(paused in listOf(false,true)) {
+                    val player=active.get()!!.second
+                    main{if(paused)player.pause() else player.play()}
+                    Thread.sleep(180)
+                    var bar:DefaultTimeBar?=null
+                    scenario!!.onActivity { a ->
+                        val view=views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
+                        view.showController();bar=views(view).filterIsInstance<DefaultTimeBar>().first()
+                    }
+                    var target=0L;var commands=0
+                    val listener=object:TimeBar.OnScrubListener {
+                        override fun onScrubStart(timeBar:TimeBar,position:Long){}
+                        override fun onScrubMove(timeBar:TimeBar,position:Long){}
+                        override fun onScrubStop(timeBar:TimeBar,position:Long,canceled:Boolean){target=position}
+                    }
+                    val playerListener=object:Player.Listener {
+                        override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)commands++}
+                    }
+                    var released=0L
+                    main {
+                        player.addListener(playerListener);bar!!.addListener(listener)
+                        val b=bar!!;val down=SystemClock.uptimeMillis()
+                        fun touch(action:Int,f:Float) { val e=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,b.width*f,b.height/2f,0);b.dispatchTouchEvent(e);e.recycle() }
+                        touch(MotionEvent.ACTION_DOWN,.2f)
+                        listOf(.8f,.3f,.65f,.4f,.75f).forEach{touch(MotionEvent.ACTION_MOVE,it)}
+                        released=SystemClock.elapsedRealtimeNanos();touch(MotionEvent.ACTION_UP,.75f)
+                    }
+                    waitFor("seek frame") { frames[player]?.let{it.second>=released && kotlin.math.abs(it.first-target)<150}==true }
+                    val renderedAt=frames[player]!!.second
+                    waitFor("subtitle follows seek") { observed.get()?.let{it.projectId==active.get()!!.first && kotlin.math.abs(it.positionMs-target)<400}==true }
+                    main {
+                        assertEquals("one seek per drag",1,commands)
+                        if(paused)assertFalse(player.playWhenReady)
+                        bar!!.removeListener(listener);player.removeListener(playerListener)
+                    }
+                    seeks.put(JSONObject().put("paused",paused).put("target_ms",target).put("release_to_frame_ns",renderedAt-released).put("commands",commands))
+                }
+                val switches=JSONArray();row.put("switches",switches)
+                for(direction in listOf(1,-1)) {
+                    val old=active.get()!!.second
+                    val startSwitch=SystemClock.elapsedRealtimeNanos()
+                    scenario!!.onActivity { a ->
+                        val view=views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
+                        assertTrue(view.onEpisodeSwipe!!.invoke(direction))
+                    }
+                    waitFor("episode first frame"){active.get()?.second?.let{it!==old && rendered.containsKey(it)}==true}
+                    switches.put(JSONObject().put("direction",direction).put("ns",rendered[active.get()!!.second]!!-startSwitch))
+                }
+                scenario!!.close();scenario=null
+                Thread.sleep(200)
+                output.writeText(report.toString(2))
+            }
+            report.put("dropped_video_frames",drops.get()).put("trace",JSONArray(trace))
+            report.put("completed",true)
+        } catch(t:Throwable) {report.put("error",t.stackTraceToString());throw t}
+        finally {
+            scenario?.close();VideoPreviewDiagnostics.onPlayerForTest=null;VideoPreviewDiagnostics.onFrameForTest=null;MoviePlaybackTrace.observer=null
+            report.put("trace",JSONArray(trace))
+            output.writeText(report.toString(2))
+        }
+    }
+}

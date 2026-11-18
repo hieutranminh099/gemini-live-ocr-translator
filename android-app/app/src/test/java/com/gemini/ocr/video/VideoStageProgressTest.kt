@@ -67,4 +67,19 @@ class VideoStageProgressTest {
         assertEquals(0, VideoStageProgress.percent(p, BatchPipelineStage.POLISH))
         assertEquals(0, VideoStageProgress.percent(p.copy(cues = emptyList()), BatchPipelineStage.TRANSLATE))
     }
+
+    @Test fun geminiOcrPolishProgressOmitsOnlyDurationOnlyTargets() {
+        val short = VideoCue("short", 0, 200, "你好", "Xin chào", origin = "OCR",
+            qualityFlags = listOf("SHORT_SUBTITLE", "ASR_UNAVAILABLE"))
+        val p = project().copy(sourceMode = VideoSourceMode.OCR, translationMode = VideoTranslationMode.GEMINI,
+            cues = listOf(
+                short,
+                short.copy(id = "uncertain", startMs = 300, endMs = 500,
+                    qualityFlags = short.qualityFlags + "OCR_SHORT_QUORUM"),
+                short.copy(id = "polished", startMs = 600, endMs = 800, polishedVi = "Chào bạn")
+            ))
+        assertEquals(50, VideoStageProgress.percent(p, BatchPipelineStage.POLISH))
+        assertEquals(33, VideoStageProgress.percent(
+            p.copy(translationMode = VideoTranslationMode.OFFLINE), BatchPipelineStage.POLISH))
+    }
 }
