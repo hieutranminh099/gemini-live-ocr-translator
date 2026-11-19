@@ -58,7 +58,9 @@ data class MovieSourceSnapshot(
         require(projectId.isBlank() || projectId.matches(Regex("[a-f0-9-]{36}")))
         require(uri.isBlank() || Uri.parse(uri).scheme in setOf("file", "content"))
         require(cues.isNotEmpty() && cues.all { it.translation.isNotBlank() }) { "Hoàn tất bản dịch trước khi lưu Kho phim." }
-        require(cues.sumOf { it.source.length.toLong() + it.translation.length + it.localDraft.length } <= 2_000_000L)
+        require(cues.sumOf { it.source.length.toLong() + it.translation.length + it.localDraft.length } <= 2_000_000L) {
+            "Phụ đề vượt giới hạn 2.000.000 ký tự của Kho phim. Hãy lưu video thành từng phần."
+        }
         require(sourceRoi.size == 4 && sourceRoi.all { it.isFinite() && it in 0f..1f } &&
             sourceRoi[2] > sourceRoi[0] && sourceRoi[3] > sourceRoi[1]) { "Vùng chữ nguồn chưa hợp lệ." }
     }

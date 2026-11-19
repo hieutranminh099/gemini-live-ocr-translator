@@ -102,34 +102,37 @@ data class MovieRecord(
 }
 
 /** Playback positions change frequently while the confirmed episode sources stay frozen. */
-private class MovieWatchEncoding(val id: String, private val sources: List<ByteArray?>) {
-    fun encode(record: MovieRecord): List<ByteArray> = buildList {
-        add((record.json(includeEpisodes = false).toString().dropLast(1) + ",\"episodes\":[").toByteArray())
-        record.episodes.forEachIndexed { index, episode ->
-            val prefix = if (index == 0) "" else ","
-            val source = sources[index]
-            if (source == null) {
-                add((prefix + episode.json().toString()).toByteArray())
-            } else {
-                add((prefix + episode.json(includeSource = false).toString().dropLast(1) + ",\"source\":").toByteArray())
-                add(source)
-                add(END_EPISODE)
+private class MovieWatchEncoding(val id: String, private val sources: List<ByteArray?>?) {
+    fun encode(record: MovieRecord): List<ByteArray>? {
+        val cached = sources ?: return null
+        return buildList {
+            add((record.json(includeEpisodes = false).toString().dropLast(1) + ",\"episodes\":[").toByteArray())
+            record.episodes.forEachIndexed { index, episode ->
+                val prefix = if (index == 0) "" else ","
+                val source = cached[index]
+                if (source == null) {
+                    add((prefix + episode.json().toString()).toByteArray())
+                } else {
+                    add((prefix + episode.json(includeSource = false).toString().dropLast(1) + ",\"source\":").toByteArray())
+                    add(source)
+                    add(END_EPISODE)
+                }
             }
+            add(END_MOVIE)
         }
-        add(END_MOVIE)
     }
 
     companion object {
         private val END_EPISODE = "}".toByteArray()
         private val END_MOVIE = "]}".toByteArray()
 
-        fun create(record: MovieRecord): MovieWatchEncoding? {
-            if (record.episodes.none { it.source != null }) return null
+        fun create(record: MovieRecord): MovieWatchEncoding {
+            if (record.episodes.none { it.source != null }) return MovieWatchEncoding(record.id, null)
             var bytes = 0L
             val sources = record.episodes.map { episode ->
                 episode.source?.json(portable = false)?.toString()?.toByteArray()?.also {
                     bytes += it.size
-                    if (bytes > 4L * 1024 * 1024) return null
+                    if (bytes > 4L * 1024 * 1024) return MovieWatchEncoding(record.id, null)
                 }
             }
             return MovieWatchEncoding(record.id, sources)

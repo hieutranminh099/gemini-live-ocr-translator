@@ -96,6 +96,25 @@ class MovieSourceLibraryTest {
         assertEquals(2_100_000L, latest.episodes.first().positionMs)
         assertEquals(edited, latest.episodes.first().source)
     }
+    @Test fun oversizedPlaybackSnapshotStillPersistsPositionsAndAllCues() {
+        val duration = 36 * 60 * 1000L
+        val sourceLine = "中文字幕。".repeat(36)
+        val translation = "Câu phụ đề tiếng Việt. ".repeat(7)
+        val project = input().project.copy(durationMs = duration, scanMs = duration, cues = List(5065) { index ->
+            VideoCue("cue-$index", index * 420L, index * 420L + 400, sourceLine, translation, approved = true)
+        })
+        val source = MovieSourceSnapshot.freeze(project, "a".repeat(64), 1024L)
+        assertTrue(source.json(portable = false).toString().toByteArray().size > 4 * 1024 * 1024)
+        val episode = MovieEpisode("long", "Tập dài", "/movie/input", duration, source = source)
+        val movie = MovieRecord(UUID.randomUUID().toString(), "Phim dài", listOf(episode))
+        library.save(movie)
+        library.progress(movie.id, episode.id, 10_000L)
+        library.progress(movie.id, episode.id, 2_000_000L)
+
+        val saved = requireNotNull(MovieLibrary(context).find(movie.id)).episodes.single()
+        assertEquals(2_000_000L, saved.positionMs)
+        assertEquals(source, saved.source)
+    }
     @Test fun missingSourceAndUntranslatedTimelineNeverPublishPartialMovie() = runBlocking {
         val good = input("good"); val missing = input("missing")
         File(Uri.parse(missing.project.uri).path!!).delete()

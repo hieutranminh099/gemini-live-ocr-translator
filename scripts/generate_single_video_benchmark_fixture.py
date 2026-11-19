@@ -62,8 +62,8 @@ def main() -> None:
     parser.add_argument("output", type=Path, help="new fixture directory")
     parser.add_argument("--cues", type=int, default=4000)
     args = parser.parse_args()
-    if not 1 <= args.cues <= 5065:
-        parser.error("--cues must be between 1 and 5065")
+    if not 1 <= args.cues <= 20000:
+        parser.error("--cues must be between 1 and 20000")
     generate(args.output, args.cues)
 
 
