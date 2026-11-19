@@ -28,6 +28,45 @@ class VideoTranslationPlanTest{
         val long=(0 until 20).map{cue(it,"中".repeat(250),"Việt".repeat(10))}
         assertEquals(4,VideoTranslationPlan.nextCloudBatch(long,true)!!.indices.size)
     }
+    @Test fun latePolishBatchProjectsOnlyTargetsAndTheirContextWithoutChangingTheRequest() {
+        val rows = (0 until 5065).map { cue(it, approved = it % 7 == 0) }
+        val firstCandidate = 5058
+        fun forPolish(index: Int, cue: VideoCue) =
+            if (index >= firstCandidate && !cue.protectedText && index % 3 != 0)
+                cue.copy(translation = "", localDraft = cue.translation, refinementState = "pending")
+            else cue.copy(approved = true)
+        val previous = VideoTranslationPlan.nextCloudBatch(rows.mapIndexed(::forPolish), true, maxCues = 2)
+        val projectedIndices = mutableListOf<Int>()
+        val actual = VideoTranslationPlan.nextProjectedCloudBatch(rows, true, 2, firstCandidate) { index, cue ->
+            projectedIndices += index
+            forPolish(index, cue)
+        }
+        assertNotNull(previous)
+        assertEquals(previous, actual)
+        assertTrue(projectedIndices.isNotEmpty())
+        assertTrue(projectedIndices.all { it >= firstCandidate - 3 })
+    }
+
+    @Test fun deferredTranslationGroupsKeepTheirContextAndUnresolvedPrefix() {
+        val rows = (0 until 12).map { cue(it, draft = if (it < 6) "Việt $it" else "") }.toMutableList()
+        rows[5] = rows[5].copy(model = "user-edited", qualityFlags = listOf("USER_PINNED"))
+        val deferred = setOf(rows[7].id)
+        fun project(cue: VideoCue) = if (cue.id in deferred) cue.copy(approved = true) else cue
+        val first = VideoTranslationPlan.nextProjectedCloudBatch(rows, false, 3, 6) { _, cue -> project(cue) }!!
+        assertEquals(listOf(6, 8, 9), first.indices)
+        assertEquals(VideoTranslationPlan.nextCloudBatch(rows.map(::project), false, maxCues = 3), first)
+
+        val completed = VideoTranslationPlan.applyCloudResult(rows, VideoTranslationPlan.selectBatch(first, listOf(1, 2)),
+            listOf("Tám", "Chín"), "test-model", false)
+        val next = VideoTranslationPlan.nextProjectedCloudBatch(completed, false, 3, first.indices.first()) { _, cue ->
+            project(cue)
+        }
+        assertEquals(VideoTranslationPlan.nextCloudBatch(completed.map(::project), false, maxCues = 3), next)
+        assertEquals(listOf(6, 10, 11), next?.indices)
+        assertEquals(rows[5], completed[5])
+        assertEquals(rows[7], completed[7])
+    }
+
     @Test fun draftsHaveTheirOwnBudgetAndCannotDisplaceOriginalSource(){
         val rows=(0 until 10).map{cue(it,"不卖250匹马","Sai nháp ".repeat(170))}
         val batch=VideoTranslationPlan.nextCloudBatch(rows,true)!!

@@ -11,6 +11,33 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 
 class VideoOcrTailBenchmarkTest {
+    @Test fun ringReusesOnlyTheEvictedSampleWhenNeitherOcrNorTheTailStillUsesIt() {
+        val ring = VideoOcrFrameRing()
+        val reuse = VideoOcrReuse<String>()
+        fun frame(ms: Long, bytes: ByteArray = byteArrayOf(ms.toByte())) = VideoOcrFrame(ms, 1, 1, bytes)
+        val initial = List(VideoOcrFrameRing.CAPACITY) { frame(it.toLong()) }
+        for (sample in initial) {
+            assertNull(ring.evictLumaForNextSample(reuse.referenceFrame, null))
+            ring.add(sample)
+        }
+        val (ocrReference, tailReference, reusable) = initial
+        reuse.record(ocrReference, "字幕")
+        assertNull(ring.evictLumaForNextSample(reuse.referenceFrame, tailReference))
+        ring.add(frame(6))
+        assertNull(ring.evictLumaForNextSample(reuse.referenceFrame, tailReference))
+        ring.add(frame(7))
+
+        val buffer = checkNotNull(ring.evictLumaForNextSample(reuse.referenceFrame, tailReference))
+        assertSame(reusable.luma, buffer)
+        buffer[0] = 8
+        ring.add(frame(8, buffer))
+
+        assertEquals(listOf(3L, 4L, 5L, 6L, 7L, 8L), ring.iterator().asSequence().map { it.ms }.toList())
+        assertArrayEquals(byteArrayOf(0), ocrReference.luma)
+        assertArrayEquals(byteArrayOf(1), tailReference.luma)
+        assertEquals("字幕", reuse.lookup(frame(9, byteArrayOf(0)), needsConfirmation = false))
+    }
+
     @Test fun tailReusePreservesRetainedSamplesAndRejectsOlderAndEqualTimestamps() {
         val tail = VideoOcrTail()
         fun capture(ms: Long, retained: Boolean, pattern: Int, rotation: Int = 90): VideoOcrFrame {

@@ -28,11 +28,19 @@ object VideoStageProgress {
             if (completed(project, stage)) 100 else 0
         } else fraction(translatedCueCount(project), project.cues.size)
         BatchPipelineStage.POLISH -> if (completed(project, stage)) 100 else {
-            val targets = project.cues.filter { !it.protectedText && (it.polishedVi.isNotBlank() ||
-                project.translationMode == VideoTranslationMode.OFFLINE && project.offlinePolishPolicy == VideoPolishPolicy.ALL ||
-                VideoStagedPipeline.needsPolish(project, it)) }
-            fraction(targets.count { it.polishedVi.isNotBlank() && "POLISH_PENDING" !in it.qualityFlags }, targets.size)
-                .coerceAtMost(99)
+            val all = project.translationMode == VideoTranslationMode.OFFLINE && project.offlinePolishPolicy == VideoPolishPolicy.ALL
+            var targets = 0
+            var done = 0
+            for (cue in project.cues) {
+                if (cue.protectedText) continue
+                if (cue.polishedVi.isNotBlank()) {
+                    targets++
+                    if ("POLISH_PENDING" !in cue.qualityFlags) done++
+                } else if (all || VideoStagedPipeline.needsPolish(project, cue)) {
+                    targets++
+                }
+            }
+            fraction(done, targets).coerceAtMost(99)
         }
         BatchPipelineStage.CLEAN, BatchPipelineStage.FINISH -> if (completed(project, stage)) 100 else 0
     }

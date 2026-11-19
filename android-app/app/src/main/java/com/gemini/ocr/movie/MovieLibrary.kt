@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -37,10 +38,10 @@ data class MovieEpisode(val id:String,val title:String,val path:String,val durat
     val imported: Boolean = false, val captionUndo: MovieCaptionUndo? = null) {
     val isSourceQuality get()=source!=null
     val mediaUri:String get()=source?.uri ?: path.takeIf{it.isNotBlank()}?.let{Uri.fromFile(File(it)).toString()}.orEmpty()
-    internal fun json(portable:Boolean=false)=JSONObject().put("id",id).put("title",title)
+    internal fun json(portable:Boolean=false, includeSource:Boolean=true)=JSONObject().put("id",id).put("title",title)
         .put("path",if(portable)"" else path).put("durationMs",durationMs).put("positionMs",positionMs)
         .put("positionUpdatedAt",positionUpdatedAt).put("positionConflict",positionConflict)
-        .put("source",source?.json(portable)?:JSONObject.NULL)
+        .also { if (includeSource) it.put("source",source?.json(portable)?:JSONObject.NULL) }
         .apply {
             if (imported) put("imported", true)
             if (!portable) captionUndo?.takeIf { it.revision == source?.revision }?.let { put("captionUndo", it.json()) }
@@ -68,8 +69,9 @@ data class MovieRecord(
     val syncState:String="LOCAL",val cloudId:String="",val coverPath:String="",
     val confirmedAt:Long=System.currentTimeMillis(),val message:String="",val updatedAt:Long=confirmedAt,val titleUpdatedAt:Long=0
 ) {
-    internal fun json(portable:Boolean=false)=JSONObject().put("schema",if(episodes.any{it.source!=null})2 else 1).put("id",id).put("title",title)
-        .put("episodes",JSONArray(episodes.map{it.json(portable)})).put("accountEmail",if(portable)"" else accountEmail)
+    internal fun json(portable:Boolean=false, includeEpisodes:Boolean=true)=JSONObject().put("schema",if(episodes.any{it.source!=null})2 else 1).put("id",id).put("title",title)
+        .also { if (includeEpisodes) it.put("episodes",JSONArray(episodes.map{episode->episode.json(portable)})) }
+        .put("accountEmail",if(portable)"" else accountEmail)
         .put("syncState",if(portable)"CLOUD" else syncState).put("cloudId",if(portable)"" else cloudId)
         .put("coverPath",if(portable)"" else coverPath).put("confirmedAt",confirmedAt).put("message",if(portable)"" else message)
         .put("updatedAt",updatedAt).put("titleUpdatedAt",titleUpdatedAt)
@@ -99,6 +101,42 @@ data class MovieRecord(
     }
 }
 
+/** Playback positions change frequently while the confirmed episode sources stay frozen. */
+private class MovieWatchEncoding(val id: String, private val sources: List<ByteArray?>) {
+    fun encode(record: MovieRecord): List<ByteArray> = buildList {
+        add((record.json(includeEpisodes = false).toString().dropLast(1) + ",\"episodes\":[").toByteArray())
+        record.episodes.forEachIndexed { index, episode ->
+            val prefix = if (index == 0) "" else ","
+            val source = sources[index]
+            if (source == null) {
+                add((prefix + episode.json().toString()).toByteArray())
+            } else {
+                add((prefix + episode.json(includeSource = false).toString().dropLast(1) + ",\"source\":").toByteArray())
+                add(source)
+                add(END_EPISODE)
+            }
+        }
+        add(END_MOVIE)
+    }
+
+    companion object {
+        private val END_EPISODE = "}".toByteArray()
+        private val END_MOVIE = "]}".toByteArray()
+
+        fun create(record: MovieRecord): MovieWatchEncoding? {
+            if (record.episodes.none { it.source != null }) return null
+            var bytes = 0L
+            val sources = record.episodes.map { episode ->
+                episode.source?.json(portable = false)?.toString()?.toByteArray()?.also {
+                    bytes += it.size
+                    if (bytes > 4L * 1024 * 1024) return null
+                }
+            }
+            return MovieWatchEncoding(record.id, sources)
+        }
+    }
+}
+
 /** Only explicitly confirmed, independently owned playable outputs belong in this store. */
 class MovieLibrary internal constructor(
     private val context:Context,
@@ -110,6 +148,7 @@ class MovieLibrary internal constructor(
     private val mutable=MutableStateFlow<List<MovieRecord>>(emptyList())
     private val records=mutableMapOf<String,MovieRecord>()
     private var catalogVersion=-1L
+    private var watchEncoding: MovieWatchEncoding? = null
     val movies:StateFlow<List<MovieRecord>> = mutable
     internal val operation=Mutex()
     init {
@@ -144,6 +183,7 @@ class MovieLibrary internal constructor(
         return records
     }
     private fun reloadCatalog() {
+        watchEncoding = null
         records.clear()
         root.listFiles().orEmpty().filter{it.isDirectory && it.name.matches(Regex("[a-f0-9-]{36}"))}
             .forEach{directory->
@@ -170,12 +210,20 @@ class MovieLibrary internal constructor(
         MovieRecord.validate(record)
         persist(record)
     }
-    private fun persist(record:MovieRecord,publish:Boolean=true):MovieRecord {
+    private fun persist(record:MovieRecord,publish:Boolean=true,positionOnly:Boolean=false):MovieRecord {
         catalog()
-        val bytes=record.json().toString().toByteArray(Charsets.UTF_8)
-        require(bytes.size<=32*1024*1024){"Danh mục phim quá lớn; bản cũ vẫn được giữ."}
+        val watch = if (positionOnly) watchEncoding?.takeIf { it.id == record.id } ?: MovieWatchEncoding.create(record)
+            else null
+        val parts = watch?.encode(record) ?: listOf(record.json().toString().toByteArray(Charsets.UTF_8))
+        require(parts.sumOf { it.size.toLong() }<=32L*1024*1024){"Danh mục phim quá lớn; bản cũ vẫn được giữ."}
         val file=AtomicFile(File(folder(record.id),"movie.json"));val out=file.startWrite()
-        try{out.write(bytes);file.finishWrite(out)}catch(e:Throwable){file.failWrite(out);throw e}
+        try {
+            val buffer = BufferedOutputStream(out)
+            parts.forEach(buffer::write)
+            buffer.flush()
+            file.finishWrite(out)
+        } catch(e:Throwable){file.failWrite(out);throw e}
+        if (positionOnly || watchEncoding?.id == record.id) watchEncoding = watch
         records[record.id]=record
         catalogVersion=++storageVersion
         if(publish)publishCatalog()
@@ -516,7 +564,7 @@ class MovieLibrary internal constructor(
             // The snapshot clock orders uploads from this device. It is independent of the episode clock.
             // Only the clamped position and clocks change. The cached timeline was already verified.
             persist(p.copy(episodes=episodes,updatedAt=maxOf(p.updatedAt+1,changedAt),message=if(episodes.any{it.positionConflict})MovieRecord.PROGRESS_CONFLICT_MESSAGE
-                else p.message.takeUnless{it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty()))
+                else p.message.takeUnless{it==MovieRecord.PROGRESS_CONFLICT_MESSAGE}.orEmpty()), positionOnly = true)
             true
         }
         if (saved) MovieCloudSync.get(context).enqueueProgress(id)
@@ -529,6 +577,7 @@ class MovieLibrary internal constructor(
         deleteOwnedMedia(record)
         AtomicFile(File(folder(id),"movie.json")).delete()
         records.remove(id)
+        if (watchEncoding?.id == id) watchEncoding = null
         catalogVersion=++storageVersion
         publishCatalog()
     }

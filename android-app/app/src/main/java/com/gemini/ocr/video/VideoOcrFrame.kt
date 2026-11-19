@@ -35,6 +35,30 @@ internal data class VideoOcrFrame(val ms:Long,val width:Int,val height:Int,val l
     }
 }
 
+/** The transition samples own their luma until they leave this ring. */
+internal class VideoOcrFrameRing {
+    private val frames = ArrayDeque<VideoOcrFrame>(CAPACITY)
+
+    fun evictLumaForNextSample(ocrReference: VideoOcrFrame?, tail: VideoOcrFrame?): ByteArray? {
+        if (frames.size < CAPACITY) return null
+        val oldest = frames.removeFirst()
+        return oldest.luma.takeUnless { oldest === ocrReference || oldest === tail }
+    }
+
+    fun add(frame: VideoOcrFrame) {
+        check(frames.size < CAPACITY)
+        frames.addLast(frame)
+    }
+
+    operator fun iterator(): Iterator<VideoOcrFrame> = frames.iterator()
+
+    fun clear() = frames.clear()
+
+    companion object {
+        const val CAPACITY = 6
+    }
+}
+
 /** One scratch bitmap per serial video OCR scan. Release only after native recognition returns. */
 internal class VideoOcrBitmapBuffer {
     private var pixels = IntArray(0)

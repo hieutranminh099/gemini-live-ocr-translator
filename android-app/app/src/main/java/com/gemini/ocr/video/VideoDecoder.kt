@@ -95,7 +95,7 @@ object VideoDecoder {
         val roi=project.roi
         require(roi.size==4 && roi.all{it.isFinite() && it in 0f..1f} && roi[2]-roi[0]>=.02f && roi[3]-roi[1]>=.02f){"Vùng chữ quá nhỏ hoặc không hợp lệ."}
         val extractor=VideoCodecBoundary.call("create_extractor",project.scanMs){MediaExtractor()};var codec:MediaCodec?=null;var started=false
-        val ocr=OcrProcessor("zh");val ring=ArrayDeque<VideoOcrFrame>()
+        val ocr=OcrProcessor("zh");val ring=VideoOcrFrameRing()
         val tail=if(videoDrafts) VideoOcrTail() else null
         val bitmapBuffer=if(videoDrafts) VideoOcrBitmapBuffer() else null
         val draftTimeline = if (videoDrafts) VideoDraftTimeline(project.cues, project.carry) else null
@@ -158,7 +158,8 @@ object VideoDecoder {
                 .put("crop_wall_ms",cropMs).put("bitmap_wall_ms",bitmapMs).put("ocr_wall_ms",ocrMs)
                 .put("gate_wall_ms",gateMs).put("total_wall_ms",total)
                 .put("decode_and_other_wall_ms",(total-cropMs-bitmapMs-ocrMs-gateMs).coerceAtLeast(0))
-                .put("retained_samples_max",if(videoDrafts)7 else 6).put("retained_format","ROI luma bytes; bitmap only for OCR")
+                .put("retained_samples_max",VideoOcrFrameRing.CAPACITY + if(videoDrafts)1 else 0)
+                .put("retained_format","ROI luma bytes; bitmap only for OCR")
                 .put("stable_sample_interval_ms",200).put("confirmation_sample_interval_ms",65)
         }
         fun carry(sourceMs:Long)=acc.snapshot().also{if(videoDrafts)it.put("draftQuality",quality.snapshot(it.optString("source")))}.put("metrics",metrics(sourceMs))
@@ -245,7 +246,11 @@ object VideoDecoder {
                             val decoded=codecStep("read_frame"){decoder.getOutputImage(index)}
                                 ?:throw VideoDecodeException("FRAME_NULL","read_frame",lastEmitted)
                             val cropAt=SystemClock.elapsedRealtime()
-                            val reusableLuma=tail?.reusableLuma(ms,retain)
+                            val reusableLuma = if (retain) {
+                                ring.evictLumaForNextSample(reuse.referenceFrame, tail?.frame)
+                            } else {
+                                tail?.reusableLuma(ms, false)
+                            }
                             val frame=try {
                                 val crop=decoded.cropRect;val plane=decoded.planes[0]
                                 cropper.sample(ms,plane.buffer,plane.rowStride,plane.pixelStride,
@@ -265,8 +270,7 @@ object VideoDecoder {
                 // a Live gate or an AtomicFile write; these operations may take seconds.
                 captured?.let { frame ->
                     val ms=frame.ms
-                    ring.addLast(frame)
-                    while(ring.size>6)ring.removeFirst()
+                    ring.add(frame)
                     if(ms>=nextOcr){
                         val reused=reuse.lookup(frame,acc.needsConfirmation)
                         val reading = if (reused != null) { reusedObservations++; reused } else recognize(frame)

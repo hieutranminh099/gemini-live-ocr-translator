@@ -66,6 +66,36 @@ class MovieSourceLibraryTest {
         original.delete()
         assertTrue(library.isAvailable(saved.episodes.single()))
     }
+    @Test fun longPlaybackPositionsKeepCompleteSourcesAcrossRevisionAndStoreReload() {
+        val duration = 36 * 60 * 1000L
+        val project = input().project.copy(durationMs = duration, scanMs = duration, cues = List(5065) { index ->
+            VideoCue("cue-$index", index * 420L, index * 420L + 400, "字幕 $index", "Câu số \"$index\"\nTiếp theo.",
+                approved = true, qualityFlags = listOf("OCR"), ocrAlternatives = listOf("字幕"))
+        })
+        val source = MovieSourceSnapshot.freeze(project, "a".repeat(64), 1024L)
+        val original = MovieRecord(UUID.randomUUID().toString(), "Video dài", listOf(
+            MovieEpisode("translated", "Phụ đề", "/movie/input", duration, source = source),
+            MovieEpisode("legacy", "MP4", "/movie/legacy.mp4", 60_000L)
+        ))
+        library.save(original)
+        library.progress(original.id, "translated", 10_000L)
+        library.progress(original.id, "translated", 2_000_000L)
+
+        val reopened = MovieLibrary(context)
+        val saved = requireNotNull(reopened.find(original.id))
+        assertEquals(2_000_000L, saved.episodes.first().positionMs)
+        assertEquals(source, saved.episodes.first().source)
+        assertEquals(original.episodes.last(), saved.episodes.last())
+
+        val edited = source.withUpdatedCues(source.cues.mapIndexed { index, cue ->
+            if (index == 0) cue.copy(translation = "Đã kiểm tra lại") else cue
+        }, duration, source.revisedAt + 1L)
+        reopened.save(saved.copy(episodes = listOf(saved.episodes.first().copy(source = edited), saved.episodes.last())))
+        library.progress(original.id, "translated", 2_100_000L)
+        val latest = requireNotNull(reopened.find(original.id))
+        assertEquals(2_100_000L, latest.episodes.first().positionMs)
+        assertEquals(edited, latest.episodes.first().source)
+    }
     @Test fun missingSourceAndUntranslatedTimelineNeverPublishPartialMovie() = runBlocking {
         val good = input("good"); val missing = input("missing")
         File(Uri.parse(missing.project.uri).path!!).delete()

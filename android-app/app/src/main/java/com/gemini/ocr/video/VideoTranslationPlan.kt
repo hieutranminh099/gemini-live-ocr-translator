@@ -50,10 +50,26 @@ object VideoTranslationPlan {
      * Skip Approved/already finished cues without losing their position as scene context. A large
      * single cue is allowed alone within timeline limits; no source or local draft is truncated.
      */
-    fun nextCloudBatch(cues:List<VideoCue>,hybrid:Boolean,maxCues:Int=LEGACY_DEFAULT_CUES,maxSourceChars:Int=SOURCE_BUDGET):Batch?{
+    fun nextCloudBatch(cues:List<VideoCue>,hybrid:Boolean,maxCues:Int=LEGACY_DEFAULT_CUES,maxSourceChars:Int=SOURCE_BUDGET):Batch? =
+        nextCloudBatch(cues,hybrid,maxCues,maxSourceChars,0)
+
+    /** Earlier targets are resolved or deferred in this pass, but remain available as context. */
+    internal fun nextProjectedCloudBatch(
+        cues: List<VideoCue>, hybrid: Boolean, maxCues: Int, startIndex: Int,
+        projectCue: (Int, VideoCue) -> VideoCue
+    ): Batch? {
+        val projected = object : AbstractList<VideoCue>() {
+            override val size = cues.size
+            override fun get(index: Int) = projectCue(index, cues[index])
+        }
+        return nextCloudBatch(projected, hybrid, maxCues, SOURCE_BUDGET, startIndex)
+    }
+
+    private fun nextCloudBatch(cues:List<VideoCue>,hybrid:Boolean,maxCues:Int,maxSourceChars:Int,startIndex:Int):Batch?{
         require(maxCues in 1..MAX_CUES && maxSourceChars in 1..SOURCE_BUDGET)
+        require(startIndex in 0..cues.size)
         val indices=mutableListOf<Int>();var sourceChars=0;var draftChars=0
-        for(index in cues.indices){
+        for(index in startIndex until cues.size){
             val cue=cues[index]
             if(cue.protectedText || !(if(hybrid)needsCloudRefinement(cue) else cue.translation.isBlank()))continue
             val draft=if(hybrid)cue.localDraft.ifBlank{cue.translation} else ""

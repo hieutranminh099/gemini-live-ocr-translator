@@ -2,13 +2,13 @@ name: Single-video Android benchmark
 
 on:
   push:
-    branches: [perf/single-video]
+    branches: [perf/single-video, perf/long-video]
 
 permissions:
   contents: read
 
 concurrency:
-  group: single-video-gemini-benchmark
+  group: video-benchmark-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -21,6 +21,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Check benchmark secret
+        if: github.ref_name == 'perf/single-video'
         env:
           GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: |
@@ -74,19 +75,35 @@ jobs:
           sudo chmod a+rw /dev/kvm
       - name: Verify the shared benchmark clip
         run: |
-          echo '333caae67757141123c37515fea062892d5e9f0815f8bea3e55642699789f727  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
+          if [[ "$GITHUB_REF_NAME" == perf/long-video ]]; then
+            echo 'bfbc8fe36aad8e052e15cd875ddf043c99a029e6ef60c57a443e3513834306b4  scripts/fixtures/long-video-ocr-benchmark.mp4' | sha256sum --check
+          else
+            echo '333caae67757141123c37515fea062892d5e9f0815f8bea3e55642699789f727  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
+          fi
       - name: Build isolated baseline and candidate APKs
         run: |
           set -euo pipefail
           baseline="$RUNNER_TEMP/baseline"
-          git worktree add --detach "$baseline" a67e6ea910483d740fa988bcd682d18c4b93d5c7
-          test_path=android-app/app/src/androidTest/java/com/gemini/ocr/batch/SingleVideoGeminiBenchmarkTest.kt
+          baseline_sha=a67e6ea910483d740fa988bcd682d18c4b93d5c7
+          test_class=SingleVideoGeminiBenchmarkTest
+          base_package=com.gemini.ocr.perfbase
+          next_package=com.gemini.ocr.perfnext
+          verification_args=()
+          if [[ "$GITHUB_REF_NAME" == perf/long-video ]]; then
+            baseline_sha=46d58e7a93f54ab60a633f422683d26298a79cad
+            test_class=LongVideoBenchmarkTest
+            base_package=com.gemini.ocr.codexbench
+            next_package=com.gemini.ocr.batchunified186
+            verification_args=(-PverificationOffline=true)
+          fi
+          git worktree add --detach "$baseline" "$baseline_sha"
+          test_path="android-app/app/src/androidTest/java/com/gemini/ocr/batch/$test_class.kt"
           install -D "$test_path" "$baseline/$test_path"
           python3 scripts/setup_android_asr.py
           mkdir -p "$baseline/android-app/app/libs"
           cp android-app/app/libs/sherpa-onnx-static-link-onnxruntime-2.0.1-app.aar "$baseline/android-app/app/libs/"
-          (cd "$baseline/android-app" && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId=com.gemini.ocr.perfbase)
-          (cd android-app && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId=com.gemini.ocr.perfnext)
+          (cd "$baseline/android-app" && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId="$base_package" "${verification_args[@]}")
+          (cd android-app && bash gradlew --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest -PverificationAppId="$next_package" "${verification_args[@]}")
       - name: Start one Android emulator
         run: |
           set -euo pipefail
@@ -106,10 +123,15 @@ jobs:
           adb shell svc power stayon true
           adb shell input keyevent 82
       - name: Measure baseline and candidate with native OCR and Gemini
+        if: github.ref_name == 'perf/single-video'
         env:
           GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: |
           bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$GITHUB_WORKSPACE/scripts/fixtures/single-video-ocr-benchmark.mp4"
+      - name: Audit native OCR, near-end resume and local save for a 36-minute video
+        if: github.ref_name == 'perf/long-video'
+        run: |
+          bash scripts/run_long_video_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

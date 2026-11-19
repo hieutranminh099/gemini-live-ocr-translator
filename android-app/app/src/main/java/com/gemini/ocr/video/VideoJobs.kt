@@ -313,11 +313,14 @@ class VideoJobs internal constructor(
             var timingStage=intended
             val previousStageError = pipelineStage?.let { p.pipeline.task(it).errorCode }.orEmpty()
             val checkpointEncoding = VideoCheckpointEncoding()
+            var normalizedCheckpointCues: List<VideoCue>? = null
             suspend fun persist(next:VideoProject){
                 val now=SystemClock.elapsedRealtime();val info=Debug.MemoryInfo();Debug.getMemoryInfo(info)
                 val delta=(now-lastTick).coerceAtLeast(0)
                 val checkpointAt=System.nanoTime()
-                var captured=when(pipelineStage){
+                // Dispatch and wait checkpoints may only change metadata. Their cue snapshot
+                // already has raw source and draft fields from the last completed write.
+                var captured=if (next.cues === normalizedCheckpointCues) next else when(pipelineStage){
                     BatchPipelineStage.EXTRACT -> next.copy(cues=next.cues.map{if(it.rawZh.isBlank())it.copy(rawZh=it.source)else it})
                     BatchPipelineStage.TRANSLATE -> next.copy(cues=next.cues.map{cue->if(!cue.protectedText && cue.translation.isNotBlank() && cue.draftVi.isBlank())cue.copy(draftVi=cue.translation)else cue})
                     else -> next
@@ -335,6 +338,7 @@ class VideoJobs internal constructor(
                     extractionElapsedMs=p.extractionElapsedMs+if(timingStage==VideoStage.EXTRACTING)delta else 0,
                     translationElapsedMs=p.translationElapsedMs+if(timingStage==VideoStage.TRANSLATING)delta else 0,
                     exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0), checkpointEncoding)
+                normalizedCheckpointCues = p.cues
                 runCatching {
                     smartMetrics.add("checkpoint_writes")
                     smartMetrics.add("checkpoint_wall_ms", (System.nanoTime() - checkpointAt) / 1_000_000L)
@@ -420,7 +424,7 @@ class VideoJobs internal constructor(
                             return@launch
                         }
                         val client=VideoPolishClient(context)
-                        val attemptedIds = mutableSetOf<String>()
+                        var firstPolishCandidate = 0
                         var polishFailure: VideoApiException? = null
                         val configuredGroupSize = VideoSmartBatchSettings(context).groupSize
                         val savedGroupSize = p.pipeline.task(pipelineStage).targetCueLimit
@@ -442,12 +446,16 @@ class VideoJobs internal constructor(
                             error = message)
                         while(true){
                             gate()
-                            val candidates=p.cues.map{cue->if(isTarget(cue) && cue.id !in attemptedIds)
-                                cue.copy(translation="",localDraft=cue.draftVi.ifBlank{cue.translation},refinementState="pending")
-                                else cue.copy(approved=true)}
-                            val selectedBatch=VideoTranslationPlan.nextCloudBatch(candidates,true,maxCues=groupSize)?:break
+                            val selectedBatch = VideoTranslationPlan.nextProjectedCloudBatch(
+                                p.cues, hybrid = true, maxCues = groupSize, startIndex = firstPolishCandidate
+                            ) { index, cue ->
+                                if (index >= firstPolishCandidate && isTarget(cue))
+                                    cue.copy(translation="",localDraft=cue.draftVi.ifBlank{cue.translation},refinementState="pending")
+                                else cue.copy(approved=true)
+                            } ?: break
                             val batch=VideoStagedPipeline.withContext(selectedBatch,p.pipeline.contextProfile)
-                            attemptedIds += batch.cueIds
+                            // A pass attempts each target at most once. Resume starts at the saved timeline.
+                            firstPolishCandidate = batch.indices.last() + 1
                             var dispatched = false
                             val outcome = try {
                                 client.polish(AppSettings(context).effectiveStandaloneApiKey(), batch,
@@ -483,14 +491,18 @@ class VideoJobs internal constructor(
                                 p.cues, selected, selected.cueIds.map { outcome.accepted.getValue(it) }, outcome.model, false, p.glossary)
                             val acceptedIds = outcome.accepted.keys
                             val missingIds = outcome.missingIds.toSet()
-                            val polished = updated.mapIndexed { index, cue -> when (cue.id) {
-                                in acceptedIds -> cue.copy(
-                                    draftVi = p.cues[index].draftVi.ifBlank { p.cues[index].translation }, polishedVi = cue.translation,
-                                    qualityFlags = (cue.qualityFlags.filterNot { it == "POLISH_PENDING" || it == "POLISH_NEEDS_REVIEW" } +
-                                        if (cue.id in outcome.needsReviewIds) listOf("POLISH_NEEDS_REVIEW") else emptyList()).distinct(), version = cue.version + 1)
-                                in missingIds -> markPending(cue, "Gemini chưa trả kết quả hợp lệ cho câu này. Bản dịch nháp được giữ.")
-                                else -> cue
-                            } }
+                            val polished = updated.toMutableList()
+                            for (index in batch.indices) {
+                                val cue = updated[index]
+                                polished[index] = when (cue.id) {
+                                    in acceptedIds -> cue.copy(
+                                        draftVi = p.cues[index].draftVi.ifBlank { p.cues[index].translation }, polishedVi = cue.translation,
+                                        qualityFlags = (cue.qualityFlags.filterNot { it == "POLISH_PENDING" || it == "POLISH_NEEDS_REVIEW" } +
+                                            if (cue.id in outcome.needsReviewIds) listOf("POLISH_NEEDS_REVIEW") else emptyList()).distinct(), version = cue.version + 1)
+                                    in missingIds -> markPending(cue, "Gemini chưa trả kết quả hợp lệ cho câu này. Bản dịch nháp được giữ.")
+                                    else -> cue
+                                }
+                            }
                             val checkpoint = if (missingIds.isEmpty()) p.pipeline else rememberPolishFailure(
                                 VideoApiException("POLISH_MISSING_IDS", splitAllowed = true,
                                     detail = "Gemini chưa trả đủ câu cần hiệu đính. Bản dịch nháp và phần đã xong được giữ."),
@@ -710,15 +722,20 @@ class VideoJobs internal constructor(
                         val adaptiveGroup = if (pipelineStage == BatchPipelineStage.TRANSLATE &&
                             p.sourceMode == VideoSourceMode.OCR && p.translationMode == VideoTranslationMode.GEMINI &&
                             economy == null) VideoAdaptiveTextGroups(groupSize, recoveryGroupLimit) else null
-                        var failedCloudIds=emptySet<String>()
-                        var splitRetriedIds=emptySet<String>()
+                        val failedCloudIds=mutableSetOf<String>()
+                        val splitRetriedIds=mutableSetOf<String>()
+                        val stagedTranslation = pipelineStage == BatchPipelineStage.TRANSLATE
+                        var firstCloudCandidate = 0
                         if(p.translationMode!=VideoTranslationMode.OFFLINE)while(true){
                             gate();val repairing=pendingRepair!=null
-                            val pendingCues=if(pipelineStage==BatchPipelineStage.TRANSLATE)p.cues.map{if(it.id in failedCloudIds)it.copy(approved=true)else it} else p.cues
                             val selectedBatch=if(hybrid)VideoFullDialoguePlan.next(p.cues,p.durationMs,p.pipeline.contextProfile,hybridTargetLimit){candidate->
                                 runCatching{VideoTranslationClient.buildRequest(candidate,p.profile,p.glossary)}.isSuccess
                             }?:break
-                                else pendingRepair?:VideoTranslationPlan.nextCloudBatch(pendingCues,false,maxCues=adaptiveGroup?.limit ?: recoveryGroupLimit)?:break
+                                else pendingRepair ?: VideoTranslationPlan.nextProjectedCloudBatch(
+                                    p.cues, hybrid = false, maxCues = adaptiveGroup?.limit ?: recoveryGroupLimit,
+                                    startIndex = firstCloudCandidate
+                                ) { _, cue -> if (cue.id in failedCloudIds) cue.copy(approved = true) else cue }
+                                    ?.also { firstCloudCandidate = it.indices.first() } ?: break
                             val contextualBatch=if(pipelineStage!=null && !hybrid)VideoStagedPipeline.withContext(selectedBatch,p.pipeline.contextProfile)else selectedBatch
                             val batch=if(adaptiveGroup!=null)VideoTranslationClient.withCompactTargets(contextualBatch)else contextualBatch
                             pendingRepair=null
@@ -742,13 +759,14 @@ class VideoJobs internal constructor(
                             }
                             val requestMessage = if(hybrid)"Đã quét nguồn 100%. Gemini đang dịch phần ${batch.cueIds.size} câu, trong ${p.cues.count{!VideoTranslationPlan.isComplete(it,true)}} câu còn thiếu. Tự chọn phần lớn nhất vừa giới hạn…"
                                 else "${if(repairing)"Gemini đang thử lại" else "Gemini dịch"} câu ${batch.indices.first()+1}–${batch.indices.last()+1}/${p.cues.size}…"
-                            if (adaptiveGroup == null || p.stage != VideoStage.TRANSLATING)
+                            // For staged translation the durable dispatch write also saves the request message.
+                            if (!stagedTranslation || p.stage != VideoStage.TRANSLATING)
                                 persist(p.copy(stage=VideoStage.TRANSLATING,message=requestMessage))
                             try {
                                 suspend fun request():VideoTranslationClient.Result {
                                     val dispatch:suspend()->Unit={
                                     gate();smartMetrics.requireQuotaReady()
-                                    dispatchCheckpoint(requestMessage.takeIf { adaptiveGroup != null })
+                                    dispatchCheckpoint(requestMessage.takeIf { stagedTranslation })
                                     runCatching {
                                         if (pipelineStage == BatchPipelineStage.TRANSLATE) smartMetrics.add("translate_requests")
                                         smartMetrics.dispatch(batch.indices.size,repairing)
@@ -845,7 +863,7 @@ class VideoJobs internal constructor(
                                     VideoStagedPipeline.errorCode(e) !in setOf("API_AUTH","API_RATE_LIMIT") &&
                                     !(e is VideoApiException && (e.transient || e.code=="API_AUTH" || e.code=="API_QUOTA_EXHAUSTED" || e.code=="API_RATE_LIMIT" || e.nextRetryAt>0))){
                                     if(e is VideoApiException && e.splitAllowed && batch.indices.size>1 && batch.cueIds.none{it in splitRetriedIds}){
-                                        splitRetriedIds=splitRetriedIds+batch.cueIds;recoveryGroupLimit=maxOf(1,batch.indices.size/2)
+                                        splitRetriedIds+=batch.cueIds;recoveryGroupLimit=maxOf(1,batch.indices.size/2)
                                         adaptiveGroup?.reduce(batch.cueIds.size)
                                         persist(p.copy(message="Đang chia nhỏ nhóm chưa hợp lệ; các câu đã lưu được giữ."))
                                     }else {
@@ -853,7 +871,7 @@ class VideoJobs internal constructor(
                                         val first = failedGroup
                                         if (first == null || (VideoStagedPipeline.errorCode(first) in INCOMPLETE_RESPONSE_CODES &&
                                                 VideoStagedPipeline.errorCode(e) !in INCOMPLETE_RESPONSE_CODES)) failedGroup = e
-                                        failedCloudIds=failedCloudIds+batch.cueIds
+                                        failedCloudIds+=batch.cueIds
                                         persist(p.copy(cues=p.cues.map{if(it.id in batch.cueIds && !it.protectedText)
                                             it.copy(qualityFlags=(it.qualityFlags+"TRANSLATION_NEEDS_REVIEW").distinct()) else it},
                                             message="Đã đánh dấu nhóm cần kiểm tra; đang tiếp tục nhóm độc lập khác."))

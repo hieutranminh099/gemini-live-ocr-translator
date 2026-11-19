@@ -189,7 +189,7 @@ ML Kit dịch một cue hoàn chỉnh mỗi lần. Cache bản nháp mới giữ
 
 Chọn chế độ dịch giữ lựa chọn nguồn riêng của từng tập, bao gồm track và SRT. Nhập nhiều video từ màn hình video đơn với nguồn AUTO tiếp tục phát hiện track. Vùng chung chỉ tác động đến dự án OCR. Khi tiếp tục một OCR checkpoint hợp lệ, batch dùng vùng đã lưu. Các tệp mới có cùng số tập hoặc chưa rõ thứ tự được giữ thành đầu ra riêng, và ghép tập qua thao tác nhóm rõ ràng. Nhóm đã lưu từ phiên bản cũ được đọc theo dữ liệu hiện có.
 
-Bộ giải mã staged tái sử dụng một mảng luma riêng cho khung cuối chưa vào ring. Mỗi khung ring và dữ liệu đang OCR vẫn sở hữu byte độc lập. Lịch lấy mẫu và các kiểm tra xác nhận/PTS/EOS tiếp tục dùng hợp đồng cũ. `luma_buffer_reuses` ghi số lần tránh cấp phát mảng.
+Bộ giải mã staged có một mảng luma riêng cho khung cuối nằm ngoài bộ đệm sáu mẫu. Khi đưa mẫu mới vào, bộ giải mã có thể dùng lại mảng của mẫu vừa rời bộ đệm nếu kết quả OCR gần nhất và khung cuối đều không còn tham chiếu tới mẫu đó. Lịch lấy mẫu, kiểm tra xác nhận chữ và kiểm tra đuôi video vẫn giữ nguyên. `luma_buffer_reuses` đếm số lần dùng lại mảng luma.
 
 Các ca hồi quy mới nằm tại `BatchConfigurationTest`, `BatchOrderTest`, `VideoOfflinePolishTest`, `VideoOcrTailBenchmarkTest` và `BatchUnifiedNativeOcrTest`. Script `scripts/generate_batch_ocr_fixtures.py` tạo bộ clip tổng hợp có manifest thời gian rõ ràng. Native benchmark dùng package riêng bị Android chặn Internet, đo 1/3/5/10 video ngắn và một video 180 giây. So sánh hai decoder chỉ thuộc harness thử nghiệm, giải mã hình và OCR tiếp tục dùng một worker; dịch chữ có thể chạy đồng thời theo mức bộ nhớ đã chọn.
 
