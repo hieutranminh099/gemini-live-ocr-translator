@@ -118,4 +118,64 @@ class VideoStoreConcurrencyTest {
             store.folder(id).deleteRecursively()
         }
     }
+
+    @Test fun dispatchMarkerRestoresDiagnosticsAndNeverOverlaysChangedCuesOrRetryState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = VideoStore(context)
+        val encoding = VideoCheckpointEncoding(dispatchOverlays = true)
+        val flags = mutableListOf("ORIGINAL")
+        val id = UUID.randomUUID().toString()
+        val cues = List(520) { index ->
+            VideoCue("cue-$index", index * 250L, index * 250L + 200L, "你好", "Xin chào",
+                approved = index == 0, qualityFlags = if (index == 0) flags else emptyList())
+        }
+        val project = VideoProject(id, "Long file", "file:///fixture.mp4", 130_000L, 640, 360, cues = cues)
+        val base = File(store.folder(id), "project.json")
+        val marker = File(base.parentFile, "project.dispatch.json")
+        try {
+            val ordinary = VideoCheckpointEncoding()
+            val plain = store.save(project, ordinary)
+            store.save(plain.copy(cloudCalls = 1), ordinary, dispatchOnly = true)
+            val plainJson = JSONObject(base.readText())
+            assertFalse(plainJson.has("checkpointGeneration"))
+            assertEquals(1, plainJson.getInt("cloudCalls"))
+            assertFalse(marker.exists())
+
+            val initial = store.save(project, encoding)
+            val bytes = base.readBytes()
+            var last = store.save(initial.copy(cloudCalls = 1, elapsedMs = 77L, message = "Dispatch"), encoding,
+                dispatchOnly = true)
+            assertArrayEquals(bytes, base.readBytes())
+            val current = VideoStore(context).load(id)
+            assertEquals(last.json().toString(), current.json().toString())
+            val previousReader = VideoProject.from(JSONObject(base.readText()))
+            assertEquals(0, previousReader.cloudCalls)
+            assertEquals(current.cues, previousReader.cues)
+            assertTrue(marker.renameTo(File(marker.path + ".bak")))
+            assertEquals(1, VideoStore(context).load(id).cloudCalls)
+            val diagnostic = marker.readText()
+
+            flags += "UPDATED"
+            last = store.save(last.copy(cloudCalls = 2), encoding, dispatchOnly = true)
+            assertEquals(diagnostic, marker.readText())
+            assertEquals(last.json().toString(), VideoStore(context).load(id).json().toString())
+            assertEquals(listOf("ORIGINAL", "UPDATED"), VideoStore(context).load(id).cues.first().qualityFlags)
+            val retryAt = 123_000L
+            val retry = last.copy(cloudCalls = 3, pipeline = last.pipeline.record(
+                BatchPipelineStage.TRANSLATE, "RETRY_WAIT", 520L, nextRetryAt = retryAt))
+            val expected = store.save(retry, encoding, dispatchOnly = true)
+            assertEquals(diagnostic, marker.readText())
+            assertEquals(expected.json().toString(), VideoStore(context).load(id).json().toString())
+            assertEquals(retryAt, VideoProject.from(JSONObject(base.readText())).pipeline.task(BatchPipelineStage.TRANSLATE).nextRetryAt)
+
+            val edited = VideoStore(context).save(expected.copy(title = "Normal writer"))
+            assertEquals(diagnostic, marker.readText())
+            assertEquals(edited.json().toString(), VideoStore(context).load(id).json().toString())
+            val latest = store.save(edited.copy(cloudCalls = 4), encoding, dispatchOnly = true)
+            assertEquals(diagnostic, marker.readText())
+            assertEquals(latest.json().toString(), VideoStore(context).load(id).json().toString())
+        } finally {
+            store.folder(id).deleteRecursively()
+        }
+    }
 }

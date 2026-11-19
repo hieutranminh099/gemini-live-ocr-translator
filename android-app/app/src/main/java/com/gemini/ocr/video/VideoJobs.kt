@@ -312,14 +312,16 @@ class VideoJobs internal constructor(
             }.getOrNull()
             var timingStage=intended
             val previousStageError = pipelineStage?.let { p.pipeline.task(it).errorCode }.orEmpty()
-            val checkpointEncoding = VideoCheckpointEncoding()
+            val checkpointEncoding = VideoCheckpointEncoding(
+                dispatchOverlays = pipelineStage == BatchPipelineStage.TRANSLATE || pipelineStage == BatchPipelineStage.POLISH
+            )
             var normalizedCheckpointCues: List<VideoCue>? = null
             var textCheckpoint: VideoStageProgress.TextCheckpoint? = null
             var lastMemorySampleAt = -2_000L
             fun unstagedTranslationPercent(cues: List<VideoCue>, hybrid: Boolean): Int =
                 if (pipelineStage == null) cues.count { VideoTranslationPlan.isComplete(it, hybrid) } * 100 / cues.size
                 else p.progress
-            suspend fun persist(next:VideoProject){
+            suspend fun persist(next:VideoProject, dispatchOnly: Boolean = false){
                 val now = SystemClock.elapsedRealtime()
                 val statusChanged = pipelineStage != null &&
                     p.pipeline.task(pipelineStage).status != next.pipeline.task(pipelineStage).status
@@ -351,7 +353,7 @@ class VideoJobs internal constructor(
                 p=store.save(captured.copy(elapsedMs=p.elapsedMs+delta,maxPssKiB=maxOf(p.maxPssKiB,pss ?: 0L),resumeStage=intended,
                     extractionElapsedMs=p.extractionElapsedMs+if(timingStage==VideoStage.EXTRACTING)delta else 0,
                     translationElapsedMs=p.translationElapsedMs+if(timingStage==VideoStage.TRANSLATING)delta else 0,
-                    exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0), checkpointEncoding)
+                    exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0), checkpointEncoding, dispatchOnly)
                 normalizedCheckpointCues = p.cues
                 runCatching {
                     smartMetrics.add("checkpoint_writes")
@@ -398,7 +400,8 @@ class VideoJobs internal constructor(
                 if(pipelineStage!=null){
                     val old=p.pipeline.task(pipelineStage)
                     persist(p.copy(cloudCalls=p.cloudCalls+1,message=message ?: p.message,pipeline=p.pipeline.copy(stages=p.pipeline.stages+
-                        (pipelineStage to old.copy(status="RUNNING",nextRetryAt=0,errorCode="")))))
+                        (pipelineStage to old.copy(status="RUNNING",nextRetryAt=0,errorCode="")))),
+                        dispatchOnly = true)
                 }else persist(p.copy(cloudCalls=p.cloudCalls+1))
             }
             try {

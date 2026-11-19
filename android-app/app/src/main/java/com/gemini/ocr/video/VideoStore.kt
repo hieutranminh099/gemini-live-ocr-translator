@@ -20,27 +20,51 @@ class VideoStore(context: Context) {
     fun folder(id:String):File {require(id.matches(Regex("[a-f0-9-]{36}")));return File(directory,id).apply{mkdirs()}}
     fun save(project: VideoProject): VideoProject = save(project, null)
 
-    @Synchronized internal fun save(project: VideoProject, checkpoint: VideoCheckpointEncoding?): VideoProject = synchronized(persistenceLock) {
+    @Synchronized internal fun save(project: VideoProject, checkpoint: VideoCheckpointEncoding?,
+                                    dispatchOnly: Boolean = false): VideoProject = synchronized(persistenceLock) {
         val p=project.copy(updatedAt=System.currentTimeMillis())
+        val base = File(folder(p.id), "project.json")
+        val metadata = checkpoint?.let { p.json(includeCues = false) }
+        val protectedHeader = if (checkpoint?.dispatchOverlays == true && metadata != null && p.cues.size >= 512)
+            withoutDispatchFields(metadata) else null
+        if (dispatchOnly && protectedHeader != null && checkpoint != null) {
+            val marker = checkpoint.dispatchMarker(p.cues, protectedHeader, base, writeVersion)
+            if (marker != null) {
+                DISPATCH_FIELDS.forEach { field -> marker.put(field, requireNotNull(metadata).get(field)) }
+                val bytes = marker.toString().toByteArray(Charsets.UTF_8)
+                if (bytes.size <= MAX_DISPATCH_BYTES) {
+                    writeAtomic(AtomicFile(File(base.parentFile, DISPATCH_FILE))) { it.write(bytes) }
+                    return@synchronized p
+                }
+            }
+        }
+
         require(p.cues.sumOf{it.source.length.toLong()+it.translation.length+it.localDraft.length}<=2_000_000L){"Phụ đề quá lớn cho một dự án; hãy chia video. Checkpoint trước vẫn được giữ."}
-        val rows = checkpoint?.encode(p)
+        val generation = protectedHeader?.let { UUID.randomUUID().toString() }
+        if (generation != null) requireNotNull(metadata).put("checkpointGeneration", generation)
+        checkpoint?.invalidateDispatchBaseline()
+        val rows = checkpoint?.encode(p, requireNotNull(metadata))
         val payload = if (rows == null) p.json().toString().toByteArray(Charsets.UTF_8) else null
         require((rows?.size ?: requireNotNull(payload).size.toLong()) <= 32 * 1024 * 1024) {
             "Dự án vượt 32 MiB; checkpoint trước vẫn được giữ."
         }
-        val atomic=AtomicFile(File(folder(p.id),"project.json"))
-        val out=atomic.startWrite()
-        try {
+        writeAtomic(AtomicFile(base)) { out ->
             if (rows != null) rows.writeTo(out) else out.write(requireNotNull(payload))
-            atomic.finishWrite(out)
         }
-        catch(e:Throwable){atomic.failWrite(out);throw e}
+        writeVersion++
+        if (protectedHeader != null && generation != null) {
+            checkpoint?.recordDispatchBaseline(base, writeVersion, generation, protectedHeader)
+        }
         p
     }
     @Synchronized fun load(id:String):VideoProject = synchronized(persistenceLock) {
         val file=File(folder(id),"project.json")
         require(file.length()<=32L*1024*1024){"Dự án vượt giới hạn 32 MiB."}
-        VideoProject.from(JSONObject(AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use{it.readText()}))
+        val json = JSONObject(AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use{it.readText()})
+        readDispatchFields(File(file.parentFile, DISPATCH_FILE), json.optString("checkpointGeneration")).forEach { (key, value) ->
+            json.put(key, value)
+        }
+        VideoProject.from(json)
     }
     @Synchronized fun list():List<VideoProject> = directory.listFiles().orEmpty().filter{it.isDirectory && it.name.matches(Regex("[a-f0-9-]{36}"))}
         .mapNotNull{runCatching{load(it.name)}.getOrNull()}.sortedByDescending{it.updatedAt}
@@ -123,16 +147,84 @@ class VideoStore(context: Context) {
         // AtomicFile is not thread safe: UI, video service and cloud workers use separate stores.
         // A process-wide lock prevents openRead() recovering a backup while another instance writes.
         private val persistenceLock=Any()
+        private var writeVersion = 0L
     }
 }
 
-/** Owned by one worker. Every checkpoint remains a complete, independently readable project. */
-internal class VideoCheckpointEncoding {
-    private var previous: List<Block?> = emptyList()
+private const val DISPATCH_FILE = "project.dispatch.json"
+private const val MAX_DISPATCH_BYTES = 64 * 1024
+private val DISPATCH_FIELDS = setOf("message", "cloudCalls", "updatedAt", "elapsedMs", "maxPssKiB",
+    "extractionElapsedMs", "translationElapsedMs", "exportElapsedMs")
 
-    fun encode(project: VideoProject): Encoded {
-        val metadata = project.json(includeCues = false).toString()
-        val prefix = (metadata.dropLast(1) + ",\"cues\":[").toByteArray(Charsets.UTF_8)
+private fun withoutDispatchFields(metadata: JSONObject): String = JSONObject().apply {
+    for (key in metadata.keys()) if (key !in DISPATCH_FIELDS) put(key, metadata.get(key))
+}.toString()
+
+private inline fun writeAtomic(atomic: AtomicFile, write: (FileOutputStream) -> Unit) {
+    val output = atomic.startWrite()
+    try {
+        write(output)
+        atomic.finishWrite(output)
+    } catch (error: Throwable) {
+        atomic.failWrite(output)
+        throw error
+    }
+}
+
+private fun readDispatchFields(file: File, generation: String): List<Pair<String, Any>> {
+    if (generation.isBlank() || (!file.isFile && !File(file.path + ".bak").isFile)) return emptyList()
+    return runCatching {
+        val bytes = AtomicFile(file).openRead().use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(4096)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                require(output.size() + count <= MAX_DISPATCH_BYTES)
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+        val marker = JSONObject(bytes.toString(Charsets.UTF_8))
+        if (marker.optString("generation") != generation) return emptyList()
+        DISPATCH_FIELDS.map { key ->
+            val value = marker.get(key)
+            require(if (key == "message") value is String else (value is Int || value is Long))
+            key to value
+        }
+    }.getOrDefault(emptyList())
+}
+
+/** Encoded cue blocks and last full checkpoint, owned by one worker. */
+internal class VideoCheckpointEncoding(val dispatchOverlays: Boolean = false) {
+    private var previous: List<Block?> = emptyList()
+    private data class Baseline(val file: File, val size: Long, val mtime: Long, val version: Long,
+                                val generation: String, val protectedHeader: String)
+    private var dispatchBaseline: Baseline? = null
+
+    fun invalidateDispatchBaseline() {
+        dispatchBaseline = null
+    }
+
+    fun recordDispatchBaseline(file: File, version: Long, generation: String, protectedHeader: String) {
+        dispatchBaseline = Baseline(file, file.length(), file.lastModified(), version, generation, protectedHeader)
+    }
+
+    fun dispatchMarker(cues: List<VideoCue>, protectedHeader: String, file: File, version: Long): JSONObject? {
+        val saved = dispatchBaseline ?: return null
+        if (saved.file != file || saved.version != version || saved.size <= 0L ||
+            saved.size != file.length() || saved.mtime != file.lastModified() ||
+            saved.protectedHeader != protectedHeader || cues !is RandomAccess) return null
+        if (previous.size != (cues.size + ROWS_PER_BLOCK - 1) / ROWS_PER_BLOCK) return null
+        for (start in cues.indices step ROWS_PER_BLOCK) {
+            val savedBlock = previous[start / ROWS_PER_BLOCK] ?: return null
+            if (!savedBlock.matches(cues.subList(start, minOf(start + ROWS_PER_BLOCK, cues.size)))) return null
+        }
+        return JSONObject().put("generation", saved.generation)
+    }
+
+    fun encode(project: VideoProject, metadata: JSONObject): Encoded {
+        val prefix = (metadata.toString().dropLast(1) + ",\"cues\":[").toByteArray(Charsets.UTF_8)
         val cues = if (project.cues is RandomAccess) project.cues else project.cues.toList()
         val blockCount = (cues.size + ROWS_PER_BLOCK - 1) / ROWS_PER_BLOCK
         val cache = ArrayList<Block?>(blockCount)

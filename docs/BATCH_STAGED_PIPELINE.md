@@ -34,7 +34,9 @@ EXTRACT staged dùng `processVideoDraft()` để giữ chữ Han thực tế có
 
 `VideoStageCheckpoint` lưu `status`, `lastCheckpoint`, `attempts`, `errorCode`, `nextRetryAt`; trạng thái gồm `PENDING`, `RUNNING`, `RETRY_WAIT`, `COMPLETE`, `PAUSED`, `NEEDS_REVIEW`. Mốc trích xuất là `scanMs`; mốc dịch/hiệu đính là số câu đã có kết quả. Timeline và checkpoint nằm trong **cùng một AtomicFile** của dự án, nên không thể đánh dấu hoàn tất trước dữ liệu. Batch giữ `currentStage`, thứ tự tập và trạng thái từng item trong AtomicFile riêng; khi tiếp tục, worker đối chiếu lại dự án con thay vì tin trạng thái batch cũ.
 
-Mỗi worker có thể giữ tối đa 4 MiB dữ liệu JSON của các khối câu từ checkpoint trước. Khối giữ nguyên được ghi liền một lần. Trong khối đã sửa, chỉ những câu thay đổi cần mã hóa lại nếu còn bản lưu. Checkpoint có thể bỏ trường chứa đúng giá trị mặc định mà trình đọc schema 1 khôi phục. Từng lần lưu vẫn ghi đầy đủ timeline cùng trạng thái bằng cùng thao tác ghi nguyên tử.
+Mỗi worker có thể giữ tối đa 4 MiB dữ liệu JSON của các khối câu từ checkpoint trước. Khối giữ nguyên được ghi liền một lần. Trong khối đã sửa, chỉ những câu thay đổi cần mã hóa lại nếu còn bản lưu. Checkpoint có thể bỏ trường chứa đúng giá trị mặc định mà trình đọc schema 1 khôi phục.
+
+Khi gửi dịch hoặc hiệu đính, worker có thể lưu số lượt gửi, thông báo và thời gian hiển thị vào một AtomicFile nhỏ nếu timeline và trạng thái tiếp tục trùng với bản đầy đủ gần nhất. Trình đọc ghép các trường hiển thị khi mã thế hệ khớp với bản đầy đủ. Kết quả câu, trạng thái chạy và hạn chờ luôn được ghi cùng nhau trong `project.json`. Bản ứng dụng cũ đọc được checkpoint đầy đủ và hiển thị thống kê tính đến lần ghi đầy đủ gần nhất.
 
 `VideoPreview` báo quyền ưu tiên playback qua listener của player hiện có, kể cả lúc buffering. Pipeline không nhận trích xuất nặng mới khi đang xem; extractor/export đang chạy nhường tại gate có thể hủy. Request text đang hoàn thành vẫn được lưu. Admission API giảm về một request; sau khi player dừng, giữ hai giây trước khi phục hồi để tránh dao động do seek/pause. Live tiếp tục có gate ưu tiên riêng.
 
