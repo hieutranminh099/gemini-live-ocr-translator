@@ -91,6 +91,19 @@ class MovieCloudPlaybackUiTest {
         assertPlaybackIntent("ep-2")
     }
 
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-mdpi")
+    fun movieOptionsOpenOnTouchAfterScrollingToTheCard() {
+        updateEpisodes(movie.episodes.map { episode ->
+            if (episode.id == "ep-2") episode.copy(positionMs = 4000, positionUpdatedAt = 5000) else episode
+        })
+        openLibrary()
+        scrollToMovieCard()
+        compose.onNode(hasContentDescription("Tùy chọn phim") and hasAnyAncestor(hasTestTag(cardTag())))
+            .performScrollTo().assertIsDisplayed().performTouchInput { click() }
+        compose.onNodeWithText("Đổi tên phim").assertIsDisplayed()
+    }
+
     @Test fun expandedEpisodesCanScrollToTheEndOfALongSeries() {
         updateEpisodes(List(65) { index -> MovieEpisode("ep-$index", "Synthetic episode $index", "", 10_000) })
         openLibrary()
