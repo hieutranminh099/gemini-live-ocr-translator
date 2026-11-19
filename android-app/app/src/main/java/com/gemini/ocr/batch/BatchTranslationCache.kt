@@ -52,15 +52,44 @@ class BatchTranslationCache(context: Context) {
         private const val MAX_ENTRY = 512 * 1024
         /** Keep source, translations, draft and repair context; only positional labels are ignored. */
         internal fun key(scope: String, rawContext: String): String {
-            fun canonical(value: Any?): String = when (value) {
-                is JSONObject -> value.keys().asSequence().toList().filterNot { it in setOf("index", "startMs", "endMs") }.sorted()
-                    .joinToString("", prefix = "{", postfix = "}") { name -> "${name.length}:$name${canonical(value.get(name))}" }
-                is JSONArray -> (0 until value.length()).joinToString("", prefix = "[", postfix = "]") { canonical(value.get(it)) }
-                null, JSONObject.NULL -> "null"
-                else -> value.toString().let { "${it.length}:$it" }
+            val payload = buildString(rawContext.length) {
+                append(scope.length).append(':').append(scope)
+                appendCanonical(JSONObject(rawContext))
             }
-            val payload = "${scope.length}:$scope${canonical(JSONObject(rawContext))}"
-            return MessageDigest.getInstance("SHA-256").digest(payload.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            val hash = MessageDigest.getInstance("SHA-256").digest(payload.toByteArray(Charsets.UTF_8))
+            return buildString(hash.size * 2) {
+                for (byte in hash) {
+                    val value = byte.toInt() and 0xff
+                    append(HEX[value ushr 4]).append(HEX[value and 15])
+                }
+            }
+        }
+
+        private const val HEX = "0123456789abcdef"
+
+        private fun StringBuilder.appendCanonical(value: Any?) {
+            when (value) {
+                is JSONObject -> {
+                    append('{')
+                    val names = value.keys().asSequence()
+                        .filter { it != "index" && it != "startMs" && it != "endMs" }.sorted()
+                    for (name in names) {
+                        append(name.length).append(':').append(name)
+                        appendCanonical(value.get(name))
+                    }
+                    append('}')
+                }
+                is JSONArray -> {
+                    append('[')
+                    for (index in 0 until value.length()) appendCanonical(value.get(index))
+                    append(']')
+                }
+                null, JSONObject.NULL -> append("null")
+                else -> {
+                    val text = value.toString()
+                    append(text.length).append(':').append(text)
+                }
+            }
         }
     }
 }

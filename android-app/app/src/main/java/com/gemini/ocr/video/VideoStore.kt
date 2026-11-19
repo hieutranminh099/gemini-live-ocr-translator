@@ -169,7 +169,7 @@ internal class VideoCheckpointEncoding {
                 old.writeRow(index, buffer)
             } else {
                 rows += Row(cue)
-                buffer.write(cue.json().toString().toByteArray(Charsets.UTF_8))
+                buffer.write(cue.json(includeDefaults = false).toString().toByteArray(Charsets.UTF_8))
             }
         }
         return Block(rows, starts, buffer.toByteArray())

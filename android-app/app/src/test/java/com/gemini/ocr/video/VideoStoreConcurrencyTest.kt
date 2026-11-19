@@ -2,6 +2,7 @@ package com.gemini.ocr.video
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -85,6 +86,34 @@ class VideoStoreConcurrencyTest {
             val shortened = changed.take(514).toMutableList().apply { removeAt(255) }
             val compacted = store.save(updated.copy(cues = shortened), encoding)
             assertEquals(compacted.json().toString(), VideoStore(context).load(id).json().toString())
+        } finally {
+            store.folder(id).deleteRecursively()
+        }
+    }
+
+    @Test fun sparseCheckpointMatchesSchemaOneDefaultsAndPreservesEveryNonDefaultField() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = VideoStore(context)
+        val encoding = VideoCheckpointEncoding()
+        val defaults = VideoCue("default", 0, 500, "你好")
+        val nonDefaults = VideoCue("custom", 500, 1_500, "原文", translation = "Bản dịch", approved = true,
+            origin = "", model = "user-edited", error = "Lỗi thử nghiệm", localDraft = "Bản dự thảo",
+            refinementState = "confirmed", rawZh = "原字", correctedZh = "更正", draftVi = "Nháp",
+            polishedVi = "Câu đã sửa", ocrConfidence = 0f, qualityFlags = listOf("OCR", "EDITED"),
+            version = 3, normalizedOcrText = "标准", ocrAlternatives = listOf("替代"))
+        val id = UUID.randomUUID().toString()
+        val project = VideoProject(id, "Compatibility", "file:///fixture.mp4", 5_000, 640, 360,
+            cues = listOf(defaults, nonDefaults))
+        try {
+            val saved = store.save(project, encoding)
+            val checkpoint = JSONObject(File(store.folder(id), "project.json").readText())
+            val rows = checkpoint.getJSONArray("cues")
+            assertEquals(1, checkpoint.getInt("schema"))
+            assertEquals(setOf("id", "startMs", "endMs", "source"), rows.getJSONObject(0).keys().asSequence().toSet())
+            assertEquals(nonDefaults.json().toString(), rows.getJSONObject(1).toString())
+            assertTrue(defaults.json().has("translation"))
+            assertTrue(defaults.json().isNull("ocrConfidence"))
+            assertEquals(saved.json().toString(), VideoStore(context).load(id).json().toString())
         } finally {
             store.folder(id).deleteRecursively()
         }

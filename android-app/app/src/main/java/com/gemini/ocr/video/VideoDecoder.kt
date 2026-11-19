@@ -137,6 +137,7 @@ object VideoDecoder {
         var inputSamples=priorMetrics.optLong("input_samples")
         var maxInputBurst=priorMetrics.optInt("max_input_burst")
         var outputBuffers=priorMetrics.optLong("output_buffers")
+        var readyOutputBuffers=priorMetrics.optLong("ready_output_buffers")
         var zeroSizeOutputs=priorMetrics.optLong("zero_size_outputs")
         var lastInputMs=priorMetrics.optLong("last_input_ms",-1)
         var maxOutputMs=priorMetrics.optLong("max_output_ms",-1)
@@ -145,13 +146,18 @@ object VideoDecoder {
         var bitmapMs=priorMetrics.optLong("bitmap_wall_ms")
         var ocrMs=priorMetrics.optLong("ocr_wall_ms")
         var gateMs=priorMetrics.optLong("gate_wall_ms")
+        var codecInputNs=priorMetrics.optLong("codec_input_wall_ms")*1_000_000
+        var codecOutputDequeueNs=priorMetrics.optLong("codec_output_dequeue_wall_ms")*1_000_000
+        var codecFrameNs=priorMetrics.optLong("codec_frame_with_crop_wall_ms")*1_000_000
+        var scanCheckpointNs=priorMetrics.optLong("scan_checkpoint_wall_ms")*1_000_000
         fun metrics(sourceMs:Long):JSONObject {
             val total=priorMetrics.optLong("total_wall_ms")+SystemClock.elapsedRealtime()-startedAt
             return JSONObject().put("schema",1).put("source_video_ms",sourceMs)
                 .put("decoded_frames",decodedFrames).put("crop_conversions",cropConversions)
                 .put("luma_buffer_reuses",lumaBufferReuses)
                 .put("input_samples",inputSamples).put("max_input_burst",maxInputBurst)
-                .put("output_buffers",outputBuffers).put("zero_size_outputs",zeroSizeOutputs)
+                .put("output_buffers",outputBuffers).put("ready_output_buffers",readyOutputBuffers)
+                .put("zero_size_outputs",zeroSizeOutputs)
                 .put("last_input_ms",lastInputMs).put("max_output_ms",maxOutputMs).put("video_track_duration_ms",trackDurationMs)
                 .put("video_raw_drafts",videoDrafts)
                 .put("recognition_requests",recognitionRequests).put("refinement_requests",refinementRequests)
@@ -162,12 +168,21 @@ object VideoDecoder {
                 .put("consolidated_ocr_variants", draftTimeline?.consolidatedVariants ?: 0)
                 .put("crop_wall_ms",cropMs).put("bitmap_wall_ms",bitmapMs).put("ocr_wall_ms",ocrMs)
                 .put("gate_wall_ms",gateMs).put("total_wall_ms",total)
+                .put("codec_input_wall_ms",codecInputNs/1_000_000)
+                .put("codec_output_dequeue_wall_ms",codecOutputDequeueNs/1_000_000)
+                .put("codec_frame_with_crop_wall_ms",codecFrameNs/1_000_000)
+                .put("scan_checkpoint_wall_ms",scanCheckpointNs/1_000_000)
                 .put("decode_and_other_wall_ms",(total-cropMs-bitmapMs-ocrMs-gateMs).coerceAtLeast(0))
                 .put("retained_samples_max",VideoOcrFrameRing.CAPACITY + if(videoDrafts)1 else 0)
                 .put("retained_format","ROI luma bytes; bitmap only for OCR")
                 .put("stable_sample_interval_ms",200).put("confirmation_sample_interval_ms",65)
         }
         fun carry(sourceMs:Long)=acc.snapshot().also{if(videoDrafts)it.put("draftQuality",quality.snapshot(it.optString("source")))}.put("metrics",metrics(sourceMs))
+        suspend fun saveCheckpoint(sourceMs: Long, cues: List<VideoCue>) {
+            val checkpointAt = System.nanoTime()
+            checkpoint(sourceMs, cues, carry(sourceMs))
+            scanCheckpointNs += System.nanoTime() - checkpointAt
+        }
         suspend fun recognize(frame:VideoOcrFrame,refinement:Boolean=false,forceNative:Boolean=false):VideoOcrReading? {
             currentCoroutineContext().ensureActive()
             recognitionRequests++;if(refinement)refinementRequests++
@@ -221,6 +236,37 @@ object VideoDecoder {
             codecStep("configure"){decoder.configure(format,null,null,0)}
             codecStep("start"){decoder.start()};started=true
             val info=MediaCodec.BufferInfo();var inputEnded=false;var outputEnded=false
+            var probeReadyOutput = false
+            fun dequeueOutput(timeoutUs: Long): Int {
+                val at = System.nanoTime()
+                val index = codecStep("dequeue_output") { decoder.dequeueOutputBuffer(info, timeoutUs) }
+                codecOutputDequeueNs += System.nanoTime() - at
+                return index
+            }
+            fun queueAvailableInputs() {
+                val inputAt = System.nanoTime()
+                var queued = 0
+                while (!inputEnded && queued < INPUT_BURST_LIMIT) {
+                    val inputIndex = codecStep("dequeue_input") { decoder.dequeueInputBuffer(0) }
+                    if (inputIndex < 0) break
+                    val buffer = codecStep("read_input") { decoder.getInputBuffer(inputIndex) }
+                        ?: throw VideoDecodeException("FRAME_NULL", "read_input", lastEmitted)
+                    val size = codecStep("read_input") { extractor.readSampleData(buffer, 0) }
+                    if (size < 0) {
+                        codecStep("queue_input") { decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) }
+                        inputEnded = true
+                    } else {
+                        val time = codecStep("read_input") { extractor.sampleTime }
+                        lastInputMs = time / 1000
+                        inputSamples++
+                        queued++
+                        codecStep("queue_input") { decoder.queueInputBuffer(inputIndex, 0, size, time, 0) }
+                        codecStep("advance_input") { extractor.advance() }
+                    }
+                }
+                maxInputBurst = maxOf(maxInputBurst, queued)
+                codecInputNs += System.nanoTime() - inputAt
+            }
             var lastSample=project.scanMs-50;var nextOcr=project.scanMs;var lastCheckpoint=project.scanMs
             var lastText = project.carry.optString("source").let { raw ->
                 if (videoDrafts) VideoOcrReading(raw).normalizedText else VideoOcrStabilizer.identity(raw)
@@ -229,31 +275,19 @@ object VideoDecoder {
             while(!outputEnded){
                 currentCoroutineContext().ensureActive();val gateAt=SystemClock.elapsedRealtime();gate()
                 val waited=SystemClock.elapsedRealtime()-gateAt;watchdog.excludeWait(waited);gateMs+=waited
-                // Feed the codec's available inputs without waiting on a full queue. A bounded
-                // burst keeps its worker busy and returns to the Live/cancellation gate promptly.
-                var queued = 0
-                while (!inputEnded && queued < INPUT_BURST_LIMIT) {
-                    val index = codecStep("dequeue_input") { decoder.dequeueInputBuffer(0) }
-                    if (index < 0) break
-                    val buffer = codecStep("read_input") { decoder.getInputBuffer(index) }
-                        ?: throw VideoDecodeException("FRAME_NULL", "read_input", lastEmitted)
-                    val size = codecStep("read_input") { extractor.readSampleData(buffer, 0) }
-                    if (size < 0) {
-                        codecStep("queue_input") { decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) }
-                        inputEnded = true
-                    } else {
-                        val time = codecStep("read_input") { extractor.sampleTime }
-                        lastInputMs = time / 1000
-                        inputSamples++
-                        queued++
-                        codecStep("queue_input") { decoder.queueInputBuffer(index, 0, size, time, 0) }
-                        codecStep("advance_input") { extractor.advance() }
-                    }
+                // Consume decoded buffers already waiting, then refill without waiting on input.
+                // Between frames the same gate still checks Live priority and cancellation.
+                var outputIndex = if (probeReadyOutput && !inputEnded) dequeueOutput(0) else MediaCodec.INFO_TRY_AGAIN_LATER
+                if (outputIndex >= 0) readyOutputBuffers++
+                if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (!inputEnded) queueAvailableInputs()
+                    outputIndex = dequeueOutput(OUTPUT_TIMEOUT_US)
                 }
-                maxInputBurst = maxOf(maxInputBurst, queued)
-                val index=codecStep("dequeue_output"){decoder.dequeueOutputBuffer(info,OUTPUT_TIMEOUT_US)}
+                val index = outputIndex
+                probeReadyOutput = index >= 0
                 var captured:VideoOcrFrame?=null
                 if(index>=0){watchdog.progress();val ms=info.presentationTimeUs/1000
+                    val frameAt = System.nanoTime()
                     VideoCodecBoundary.withRelease(read={
                         outputBuffers++;if(info.size==0)zeroSizeOutputs++
                         if(info.size>0)maxOutputMs=maxOf(maxOutputMs,ms)
@@ -282,6 +316,7 @@ object VideoDecoder {
                         }
                         outputEnded=info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM!=0
                     },release={codecStep("release_output"){decoder.releaseOutputBuffer(index,false)}})
+                    codecFrameNs += System.nanoTime() - frameAt
                 } else watchdog.check(lastEmitted.coerceAtLeast(project.scanMs))
                 // The ROI owns its bytes. Never hold a vendor decoder output across native OCR,
                 // a Live gate or an AtomicFile write; these operations may take seconds.
@@ -305,7 +340,7 @@ object VideoDecoder {
                         // candidate quickly; otherwise scan every 200ms and refine the ring
                         // only when recognized source identity actually changes.
                         nextOcr=ms+if(acc.needsConfirmation)65 else 200
-                        if(ms-lastCheckpoint>=3000){checkpoint(ms+1,acc.cues.toList(),carry(ms+1));lastCheckpoint=ms}
+                        if(ms-lastCheckpoint>=3000){saveCheckpoint(ms+1,acc.cues.toList());lastCheckpoint=ms}
                     }
                     watchdog.progress()
                 }
@@ -323,14 +358,14 @@ object VideoDecoder {
             if(videoDrafts)decorateNew()
             val complete=VideoTimeline.validate(acc.cues.toList(),project.durationMs)
             // Report final counters before the caller clears extraction carry.
-            checkpoint(project.durationMs,complete,carry(project.durationMs))
+            saveCheckpoint(project.durationMs,complete)
             return complete
         } catch(error:VideoDecodeException) {
             if(videoDrafts){
                 // Save the open occurrence without finishing it. Only validated EOS may store durationMs.
                 decorateNew()
                 val resume=maxOf(project.scanMs,lastEmitted+1).coerceIn(0,(project.durationMs-1).coerceAtLeast(0))
-                checkpoint(resume,acc.cues.toList(),carry(resume))
+                saveCheckpoint(resume,acc.cues.toList())
             }
             throw error
         } finally {

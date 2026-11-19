@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import com.gemini.ocr.batch.BatchKind
 import com.gemini.ocr.batch.BatchStore
+import com.gemini.ocr.batch.BatchTranslationCache
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.Before
@@ -55,5 +56,15 @@ class VideoPrivateBatchCacheTest {
         assertNull(cache.lookup(p.copy(profile = "document"), request))
         assertNull(cache.lookup(p.copy(glossary = "你=Ngài"), request))
         assertNull(cache.lookup(p, request.copy(videoContext = request.videoContext.replace("你好", "再见"))))
+    }
+    @Test fun exactCacheKeysMatchLegacyBytesAcrossNestedUnicodeAndPositionChanges() {
+        val scope = "private:影片🙂"
+        val original = """{"targets":[{"source":"不去🙂。","startMs":100,"index":7,"endMs":350,"draft":"Dòng 1\nDòng 2"}],"scope":{"unknown":[123,true,null,{"index":0,"汉":"Không"}]},"schema":1}"""
+        val shifted = """{"schema":1,"scope":{"unknown":[123,true,null,{"汉":"Không","index":2500}]},"targets":[{"index":8000,"draft":"Dòng 1\nDòng 2","endMs":500000,"source":"不去🙂。","startMs":499000}]}"""
+        val legacyHash = "ea9bd16ceb382cc04c6ee87be79720fc8a21db57881342d6db48a4bd1ee086d5"
+        assertEquals(legacyHash, BatchTranslationCache.key(scope, original))
+        assertEquals(legacyHash, BatchTranslationCache.key(scope, shifted))
+        assertNotEquals(legacyHash, BatchTranslationCache.key(scope, original.replace("不去", "要去")))
+        assertNotEquals(legacyHash, BatchTranslationCache.key("$scope-other", original))
     }
 }
