@@ -80,26 +80,30 @@ class MoviePlaybackBenchmarkTest {
             fun visibleOptions(): UiObject2 {
                 val height = device.displayHeight
                 val x = device.displayWidth / 2
-                repeat(10) {
+                repeat(12) {
+                    device.waitForIdle(1000)
                     val icon = device.findObject(By.desc("Tùy chọn phim"))
                     val button = icon?.takeIf { it.isClickable } ?: icon?.parent?.takeIf { it.isClickable }
                     val bounds = button?.visibleBounds
                     if (button != null && bounds != null && bounds.height() >= bounds.width() / 2 &&
-                        bounds.centerY() in height / 8..height * 4 / 5) return button
-                    if (bounds != null && bounds.centerY() < height / 8) {
-                        device.swipe(x, height / 3, x, height / 2, 22)
-                    } else {
-                        device.swipe(x, height * 3 / 4, x, height / 2, 22)
-                    }
-                    device.waitForIdle(300)
+                        bounds.centerY() in height / 5..height * 3 / 5) return button
+                    // Center the button with a slow drag so the tap cannot be consumed by a fling.
+                    val start = height / 2
+                    val end = if (bounds != null && bounds.centerY() < height / 5) height * 2 / 3 else height / 3
+                    device.swipe(x, start, x, end, 80)
                 }
                 error("Movie option button did not scroll into view")
             }
             fun openRename() {
-                visibleOptions().click()
-                checkNotNull(device.wait(Until.findObject(By.text("Đổi tên phim")),5000)) {
-                    "Movie menu did not expose the rename action"
-                }.click()
+                repeat(2) {
+                    visibleOptions().click()
+                    val rename = device.wait(Until.findObject(By.text("Đổi tên phim")), 2000)
+                    if (rename != null) {
+                        rename.click()
+                        return
+                    }
+                }
+                error("Movie menu did not expose the rename action")
             }
             openRename()
             val field=device.findObjects(By.clazz("android.widget.EditText")).last()
