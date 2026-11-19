@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -894,8 +895,9 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         setMediaItem(MediaItem.fromUri(Uri.parse(project.uri)), startPosition)
         playWhenReady = restart?.playWhenReady ?: (dataSourceFactory != null || playbackOnly)
     } }
-    var scrubPosition by remember(player) { mutableStateOf<Long?>(null) }
-    var position by remember(player) { mutableLongStateOf(player.currentPosition.coerceAtLeast(0)) }
+    val scrubPosition = remember(player) { mutableStateOf<Long?>(null) }
+    val position = remember(player) { mutableLongStateOf(player.currentPosition.coerceAtLeast(0)) }
+    var canEditCaption by remember(player) { mutableStateOf(VideoTimeline.active(project.cues, startPosition) != null) }
     var playbackEnded by remember(player) { mutableStateOf(player.playbackState==Player.STATE_ENDED) }
     var playerReady by remember(player) { mutableStateOf(player.playbackState == Player.STATE_READY) }
     var playRequested by remember(player) { mutableStateOf(player.playWhenReady) }
@@ -915,6 +917,7 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
     }
     val toggleFullscreen by rememberUpdatedState({ onFullscreen(!fullscreen) })
     val latestMovieControls by rememberUpdatedState(movieControls)
+    val latestProject by rememberUpdatedState(project)
     val locked = movieControls != null && fullscreen && touchLocked
     if (managesFullscreenWindow) VideoFullscreenWindow(fullscreen, displaySize.width > displaySize.height)
     val commitRoi by rememberUpdatedState(onRoi)
@@ -929,10 +932,17 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         positionReporter.onFlush = onPositionFlushed
     }
     val subtitleClock=remember(player){VideoSubtitleClock(AndroidVideoFrameScheduler(),
-        position={player.currentPosition},playing={player.isPlaying},ended={player.playbackState==Player.STATE_ENDED}){time,ended->
+        position={player.currentPosition},playing={player.isPlaying},ended={player.playbackState==Player.STATE_ENDED},
+        delayAfterPosition = { time ->
+            val captions = playerView?.takeIf { it.player === player }?.tag as? SavedTimelineSubtitleView
+            if (!playbackOnly || captions == null) 0L
+            else movieSubtitlePollDelayMs(time, captions.nextBoundaryMs(), player.playbackParameters.speed)
+        }){time,ended->
         // Captions follow every actual media-time observation without recomposing the player tree.
         (playerView?.takeIf { it.player === player }?.tag as? SavedTimelineSubtitleView)?.position(time, ended)
-        if (position / 250 != time / 250 || playbackEnded != ended || !player.isPlaying) position=time
+        if (position.longValue / 250 != time / 250 || playbackEnded != ended || !player.isPlaying) position.longValue=time
+        if (latestMovieControls?.onCaptionEdit != null)
+            canEditCaption = !ended && VideoTimeline.active(latestProject.cues, time) != null
         playbackEnded=ended;positionReporter.report(time)
     }}
     LaunchedEffect(project.id, project.uri, dataSourceFactory, seekRequest) {
@@ -1051,7 +1061,8 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         }
     }
     val aspect = displaySize.width.toFloat() / displaySize.height
-    val panelLimit=(LocalConfiguration.current.screenHeightDp*.6f).coerceIn(120f,420f).dp
+    val screen = LocalConfiguration.current
+    val panelLimit=(screen.screenHeightDp*.6f).coerceIn(120f,420f).dp
     val panelHeight=with(LocalDensity.current){(viewportSize.width.coerceAtLeast(1)/aspect).toDp()}.coerceIn(120.dp,panelLimit)
     val viewport = VideoViewport.calculate(displaySize.width, displaySize.height,
         viewportSize.width.coerceAtLeast(1), viewportSize.height.coerceAtLeast(1), fullscreen && fill)
@@ -1081,7 +1092,7 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
                 as FullscreenPlayerView).apply {
             onDoubleTap = { toggleFullscreen() }
             this.player = player
-            onScrubPreview = { scrubPosition = it }
+            onScrubPreview = { scrubPosition.value = it }
             playerView = this
             controllerAutoShow = false
             controllerShowTimeoutMs = 2500
@@ -1112,8 +1123,9 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
                 if (it.controllerShowTimeoutMs != timeout) it.controllerShowTimeoutMs = timeout
                 (it.tag as? SavedTimelineSubtitleView)?.apply {
                     visibility = View.VISIBLE
-                    update(movieControls?.displayProject ?: project, player.currentPosition.coerceAtLeast(0), fullscreen && fill, displaySize, playbackEnded,
+                    val timelineChanged = update(movieControls?.displayProject ?: project, player.currentPosition.coerceAtLeast(0), fullscreen && fill, displaySize, playbackEnded,
                         movieControls?.appearance ?: VideoSubtitleAppearance()) { message -> subtitleError = message }
+                    if (playbackOnly && timelineChanged) subtitleClock.signal()
                 }
             }, modifier = Modifier.fillMaxSize())
         // Preview always reads the saved timeline; playback never invokes OCR or a translation engine.
@@ -1124,11 +1136,13 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         }
         val safeTop = if (fullscreen) Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(
             WindowInsetsSides.Top + WindowInsetsSides.Horizontal)) else Modifier
+        val controlBacking = if (movieControls != null) Modifier.padding(4.dp)
+            .background(Color.Black.copy(alpha = .68f), RoundedCornerShape(24.dp)) else Modifier
         if (locked) {
             FilledTonalButton(onClick = { touchLocked = false },
                 modifier = Modifier.align(Alignment.TopEnd).then(safeTop).testTag("movie_unlock")) { Text("Mở khóa") }
         } else if (!fullscreen || controlsVisible) {
-            Row(Modifier.align(Alignment.TopEnd).then(safeTop),
+            Row(Modifier.align(Alignment.TopEnd).then(safeTop).then(controlBacking),
                 verticalAlignment=Alignment.CenterVertically) {
                 if (movieControls != null) {
                     IconButton(onClick = movieControls.onSettings, modifier = Modifier.testTag("movie_playback_settings")) {
@@ -1158,14 +1172,17 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
             }
             if (movieControls != null && (movieControls.previousReady || movieControls.nextReady ||
                     movieControls.onCaptionEdit != null)) {
-                Row(Modifier.align(Alignment.TopStart).then(safeTop), verticalAlignment = Alignment.CenterVertically) {
+                val narrowFullscreen = fullscreen && screen.screenWidthDp < 360
+                Row(Modifier.align(Alignment.TopStart).then(safeTop)
+                    .padding(top = if (narrowFullscreen) 56.dp else 0.dp).then(controlBacking),
+                    verticalAlignment = Alignment.CenterVertically) {
                     if (movieControls.previousReady) IconButton(onClick = { navigateEpisode(-1) }) {
                         Icon(Icons.Outlined.SkipPrevious, "Tập trước", tint = Color.White)
                     }
                     if (movieControls.nextReady) IconButton(onClick = { navigateEpisode(1) }) {
                         Icon(Icons.Outlined.SkipNext, "Tập sau", tint = Color.White)
                     }
-                    movieControls.onCaptionEdit?.takeIf { VideoTimeline.active(project.cues, position) != null }?.let { edit ->
+                    movieControls.onCaptionEdit?.takeIf { canEditCaption }?.let { edit ->
                         IconButton(onClick = {
                             val current = player.currentPosition.coerceAtLeast(0)
                             player.pause()
@@ -1180,7 +1197,7 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         }
     }
     if (!fullscreen) {
-        Text("${videoTime(scrubPosition ?: position)} / ${videoTime(project.durationMs)}", style = MaterialTheme.typography.bodySmall)
+        VideoPreviewTime(scrubPosition, position, project.durationMs)
     }
     val previewError=playerError.ifBlank{subtitleError}
     if (previewError.isNotBlank() && (!fullscreen || playbackOnly || dataSourceFactory != null)) {
@@ -1196,6 +1213,12 @@ internal fun VideoPreview(project: VideoProject, seekRequest: Pair<Long, Long>?,
         if(editing=="ocr")commitRoi(listOf(frame.left,frame.top,frame.right,frame.bottom)) else commitFrame(frame)
         editing=""
     })
+}
+
+@Composable
+private fun VideoPreviewTime(scrub: State<Long?>, position: LongState, durationMs: Long) {
+    val duration = remember(durationMs) { videoTime(durationMs) }
+    Text("${videoTime(scrub.value ?: position.longValue)} / $duration", style = MaterialTheme.typography.bodySmall)
 }
 
 private data class VideoPreviewRestart(val positionMs: Long, val playWhenReady: Boolean, val generation: Long)
@@ -1234,8 +1257,8 @@ internal class SavedTimelineSubtitleView(context: Context) : View(context) {
 
     fun update(project: VideoProject, timeMs: Long, fill: Boolean, displaySize: IntSize, ended: Boolean,
         appearance: VideoSubtitleAppearance = VideoSubtitleAppearance(), error: (String) -> Unit
-    ) {
-        if(released)return
+    ): Boolean {
+        if(released)return false
         onError=error
         var projectionChanged=false
         if(projectId!=project.id || inputCues!==project.cues || durationMs!=project.durationMs){
@@ -1278,6 +1301,7 @@ internal class SavedTimelineSubtitleView(context: Context) : View(context) {
         layoutWidth=width;layoutHeight=height
         if(changed){invalidationCount++;invalidate()}
         observe()
+        return projectionChanged
     }
 
     /** Media-time only: never show subtitles for the finger's speculative scrub position. */
@@ -1288,6 +1312,17 @@ internal class SavedTimelineSubtitleView(context: Context) : View(context) {
         if(text!=visibleText){invalidationCount++;invalidate()}
         positionMs=timeMs;this.ended=ended;activeCue=cue;visibleText=text
         observe()
+    }
+
+    fun nextBoundaryMs(): Long? {
+        activeCue?.let { return it.endMs }
+        var start = 0
+        var end = cues.size
+        while (start < end) {
+            val middle = (start + end) ushr 1
+            if (cues[middle].startMs <= positionMs) start = middle + 1 else end = middle
+        }
+        return cues.getOrNull(start)?.startMs
     }
 
     override fun onDraw(canvas: android.graphics.Canvas) {

@@ -13,6 +13,7 @@ import com.gemini.ocr.video.VideoStore
 import com.gemini.ocr.video.sync.VideoCloudSync
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
@@ -144,19 +145,23 @@ private class MovieWatchEncoding(val id: String, private val sources: List<ByteA
 class MovieLibrary internal constructor(
     private val context:Context,
     private val validateVideo:(File)->Long=::playableDuration,
-    private val makeCover:(File,File)->Unit=::extractCover
+    private val makeCover:(File,File)->Unit=::extractCover,
+    catalogDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
-    private val root=File(context.filesDir,"movie-library").apply{mkdirs()}
+    private val root=File(context.filesDir,"movie-library")
     private val hidden=context.getSharedPreferences("movie-library-hidden",Context.MODE_PRIVATE)
     private val mutable=MutableStateFlow<List<MovieRecord>>(emptyList())
+    private val mutableCatalogLoaded = MutableStateFlow(false)
     private val records=mutableMapOf<String,MovieRecord>()
     private var catalogVersion=-1L
     private var watchEncoding: MovieWatchEncoding? = null
     val movies:StateFlow<List<MovieRecord>> = mutable
+    internal val catalogLoaded: StateFlow<Boolean> = mutableCatalogLoaded
     internal val operation=Mutex()
     init {
-        refresh()
-        CoroutineScope(SupervisorJob()+Dispatchers.IO).launch {
+        // The first account emission loads manifests on the same dispatcher as later account updates.
+        // Read/write methods still resolve the catalog synchronously under the storage lock.
+        CoroutineScope(SupervisorJob()+catalogDispatcher).launch {
             VideoCloudSync.get(context).state.map{it.accountEmail}.distinctUntilChanged().collect{
                 synchronized(storageLock){publishCatalog()}
             }
@@ -196,9 +201,11 @@ class MovieLibrary internal constructor(
         catalogVersion=storageVersion
     }
     private fun publishCatalog() {
+        val saved = catalog()
         val account=currentAccount()
-        mutable.value=catalog().values.filter{(it.accountEmail.isBlank() || it.accountEmail==account) && !isHidden(it.accountEmail,it.id)}
+        mutable.value=saved.values.filter{(it.accountEmail.isBlank() || it.accountEmail==account) && !isHidden(it.accountEmail,it.id)}
             .sortedByDescending{it.confirmedAt}
+        mutableCatalogLoaded.value = true
     }
     private fun read(file:File):MovieRecord {
         require(file.length()<=32L*1024*1024)

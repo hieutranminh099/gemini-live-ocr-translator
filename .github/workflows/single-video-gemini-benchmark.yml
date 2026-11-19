@@ -2,7 +2,7 @@ name: Single-video Android benchmark
 
 on:
   push:
-    branches: [perf/single-video, perf/long-video, perf/long-video-next]
+    branches: [perf/single-video, perf/long-video, perf/long-video-next, perf/movie-experience]
 
 permissions:
   contents: read
@@ -75,7 +75,9 @@ jobs:
           sudo chmod a+rw /dev/kvm
       - name: Verify the shared benchmark clip
         run: |
-          if [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
+          if [[ "$GITHUB_REF_NAME" == perf/movie-experience ]]; then
+            echo 'c56c2ab9338dd469f07c65685126d06024879283d28a807d7ac774cd0f75bd90  scripts/fixtures/movie-playback-benchmark.mp4' | sha256sum --check
+          elif [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
             echo 'bfbc8fe36aad8e052e15cd875ddf043c99a029e6ef60c57a443e3513834306b4  scripts/fixtures/long-video-ocr-benchmark.mp4' | sha256sum --check
           else
             echo '333caae67757141123c37515fea062892d5e9f0815f8bea3e55642699789f727  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
@@ -86,10 +88,18 @@ jobs:
           baseline="$RUNNER_TEMP/baseline"
           baseline_sha=a67e6ea910483d740fa988bcd682d18c4b93d5c7
           test_class=SingleVideoGeminiBenchmarkTest
+          test_package=batch
           base_package=com.gemini.ocr.perfbase
           next_package=com.gemini.ocr.perfnext
           verification_args=()
-          if [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
+          if [[ "$GITHUB_REF_NAME" == perf/movie-experience ]]; then
+            baseline_sha=052d22dd67dc7889ed74ad0202ab47f1d1bb56bf
+            test_package=movie
+            test_class=MoviePlaybackBenchmarkTest
+            base_package=com.gemini.ocr.playbacktest
+            next_package=com.gemini.ocr.playbacktest
+            verification_args=(-PverificationOffline=true)
+          elif [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
             baseline_sha=46d58e7a93f54ab60a633f422683d26298a79cad
             if [[ "$GITHUB_REF_NAME" == perf/long-video-next ]]; then
               baseline_sha=bb22bf5e6ad6845118303c6f6100a4c674332302
@@ -100,7 +110,7 @@ jobs:
             verification_args=(-PverificationOffline=true)
           fi
           git worktree add --detach "$baseline" "$baseline_sha"
-          test_path="android-app/app/src/androidTest/java/com/gemini/ocr/batch/$test_class.kt"
+          test_path="android-app/app/src/androidTest/java/com/gemini/ocr/$test_package/$test_class.kt"
           install -D "$test_path" "$baseline/$test_path"
           python3 scripts/setup_android_asr.py
           mkdir -p "$baseline/android-app/app/libs"
@@ -132,14 +142,20 @@ jobs:
         run: |
           bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$GITHUB_WORKSPACE/scripts/fixtures/single-video-ocr-benchmark.mp4"
       - name: Audit native OCR, near-end resume and local save for a 36-minute video
-        if: github.ref_name != 'perf/single-video'
+        if: startsWith(github.ref_name, 'perf/long-video')
         run: |
           trials=1
           if [[ "$GITHUB_REF_NAME" == perf/long-video-next ]]; then trials=3; fi
           bash scripts/run_long_video_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$trials"
+      - name: Check Movie Library and playback responsiveness on Android
+        if: github.ref_name == 'perf/movie-experience'
+        run: |
+          bash scripts/run_movie_playback_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: single-video-android-results
-          path: ${{ runner.temp }}/results/*.json
+          path: |
+            ${{ runner.temp }}/results/*.json
+            ${{ runner.temp }}/results/*.png
           retention-days: 7

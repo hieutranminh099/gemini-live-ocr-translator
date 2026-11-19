@@ -9,10 +9,20 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gemini.ocr.SessionState
 import com.gemini.ocr.video.VideoDecoder
@@ -50,7 +60,6 @@ class MoviePlaybackActivity : ComponentActivity() {
     private val pendingPositions = java.util.concurrent.ConcurrentHashMap<String,Pair<Long,Long>>()
     override fun onStart() { super.onStart(); SessionState.videoActivityVisible.value = true }
     override fun onStop() { SessionState.videoActivityVisible.value = false; super.onStop() }
-    @OptIn(ExperimentalLayoutApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val library = MovieLibrary.get(this)
@@ -72,9 +81,15 @@ class MoviePlaybackActivity : ComponentActivity() {
                 var captionMessage by remember { mutableStateOf("") }
                 val scope=rememberCoroutineScope()
                 val positionReader = remember { arrayOfNulls<() -> Long>(1) }
+                val catalogLoaded by library.catalogLoaded.collectAsState()
+                val canLoadSource = movieId.isBlank() || catalogLoaded
                 val movies by library.movies.collectAsState()
-                val currentMovie=movies.firstOrNull{it.id==movieId}
-                val currentEpisode=currentMovie?.episodes?.firstOrNull{it.id==episodeId}
+                val currentMovie = remember(movies, movieId) { movies.firstOrNull { it.id == movieId } }
+                val episodes = currentMovie?.episodes.orEmpty()
+                val episodeIndex = remember(episodes, episodeId) { episodes.indexOfFirst { it.id == episodeId } }
+                val currentEpisode = episodes.getOrNull(episodeIndex)
+                val previousEpisode = episodes.getOrNull(episodeIndex - 1)
+                val nextEpisode = if (episodeIndex >= 0) episodes.getOrNull(episodeIndex + 1) else null
                 val account by VideoCloudSync.get(this).state.collectAsState()
                 val ownerAccount = loaded?.accountEmail.orEmpty()
                 var fullscreen by rememberSaveable { mutableStateOf(false) }
@@ -83,18 +98,19 @@ class MoviePlaybackActivity : ComponentActivity() {
                 SideEffect { if (loaded != null) lastLandscape = landscape }
                 // This owner survives the nullable player's source verification/cloud loading gap.
                 VideoFullscreenWindow(fullscreen, landscape)
-                val neighbors = remember(currentMovie?.episodes?.map { it.id to it.mediaUri }, episodeId) {
-                    listOfNotNull(currentMovie?.let { movieAdjacentEpisode(it, episodeId, -1) },
-                        currentMovie?.let { movieAdjacentEpisode(it, episodeId, 1) })
-                }
-                val localNeighbors by produceState<Set<String>>(emptySet(), neighbors) {
-                    value = withContext(Dispatchers.IO) { neighbors.filter(library::isAvailable).map { it.id }.toSet() }
+                val localNeighbors by key(previousEpisode?.id, previousEpisode?.mediaUri, nextEpisode?.id, nextEpisode?.mediaUri) {
+                    produceState<Set<String>>(emptySet()) {
+                        value = withContext(Dispatchers.IO) {
+                            listOfNotNull(previousEpisode, nextEpisode).filter(library::isAvailable).map { it.id }.toSet()
+                        }
+                    }
                 }
                 fun ready(episode: MovieEpisode?): Boolean =
                     episode != null && (episode.id in localNeighbors ||
                         currentMovie?.let { it.cloudId.isNotBlank() && ownsAccount(it.accountEmail) } == true)
                 fun adjacentEpisode(direction: Int, position: Long, onlyLocal: Boolean = false): Boolean {
                     val record = currentMovie ?: return false
+                    // Multiple choices can arrive before the header recomposes.
                     val next = movieAdjacentEpisode(record, episodeId, direction) ?: return false
                     if (editingBusy || caption != null || !ownsAccount(record.accountEmail) ||
                         (onlyLocal && next.id !in localNeighbors)) return false
@@ -118,7 +134,8 @@ class MoviePlaybackActivity : ComponentActivity() {
                 val duration = currentEpisode?.durationMs
                 val catalogAccount = currentMovie?.accountEmail
                 val cloudId = currentMovie?.cloudId.orEmpty()
-                LaunchedEffect(movieId, episodeId, sourceRevision, mediaUri, duration, catalogAccount, cloudId, loadAttempt) {
+                LaunchedEffect(movieId, episodeId, canLoadSource, sourceRevision, mediaUri, duration, catalogAccount, cloudId, loadAttempt) {
+                    if (!canLoadSource) return@LaunchedEffect
                     val existing = loaded
                     val source = currentEpisode?.source
                     if (existing != null && currentEpisode != null && catalogAccount != null &&
@@ -150,64 +167,87 @@ class MoviePlaybackActivity : ComponentActivity() {
                         error = e.message ?: "Không đọc được video."
                     }
                 }
+                fun currentPosition(): Long =
+                    positionReader[0]?.invoke() ?: pendingPositions[episodeId]?.second ?: currentEpisode?.positionMs ?: 0
+
                 Surface(Modifier.fillMaxSize()) {
-                    Column(Modifier.fillMaxSize().then(if (fullscreen) Modifier else Modifier.padding(12.dp))) {
+                    Column(Modifier.fillMaxSize().then(
+                        if (fullscreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
                         if (!fullscreen) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                TextButton(onClick = { finish() }) { Text("Về Kho phim", maxLines = 1) }
-                                Column(Modifier.weight(1f)) {
-                                    Text(currentMovie?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                    Text(currentEpisode?.title.orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                                }
-                                if ((currentMovie?.episodes?.size ?: 0) > 1) {
-                                TextButton(onClick={adjacentEpisode(-1, positionReader[0]?.invoke() ?: pendingPositions[episodeId]?.second ?: currentEpisode?.positionMs ?: 0)},
-                                    enabled=movieAdjacentEpisode(currentMovie!!,episodeId,-1)!=null && !editingBusy){Text("Tập trước")}
-                                TextButton(onClick={adjacentEpisode(1, positionReader[0]?.invoke() ?: pendingPositions[episodeId]?.second ?: currentEpisode?.positionMs ?: 0)},
-                                    enabled=movieAdjacentEpisode(currentMovie!!,episodeId,1)!=null && !editingBusy){Text("Tập tiếp")}
-                                }
-                            }
-                            if ((currentMovie?.episodes?.size ?: 0) > 1)
-                                Text("Vuốt xuống để xem tập tiếp · vuốt lên để về tập trước", style = MaterialTheme.typography.bodySmall)
-                            if(currentEpisode?.source!=null) {
-                                Text("Video gốc · phụ đề riêng · không mã hóa lại",style=MaterialTheme.typography.bodySmall)
-                                FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick={
-                                        editingBusy=true;error=""
-                                        scope.launch {
-                                            try {
-                                                val edit=if(editProjectId.isBlank())library.createSourceEditor(movieId,episodeId)
-                                                    else withContext(Dispatchers.IO){VideoStore(this@MoviePlaybackActivity).load(editProjectId)}
-                                                if(editProjectId.isBlank())editingRevision=currentEpisode.source!!.revision
-                                                editProjectId=edit.id
-                                                startActivity(Intent(this@MoviePlaybackActivity,VideoActivity::class.java)
-                                                    .putExtra("project",edit.id).putExtra("ux_step","review"))
-                                            } catch(e:CancellationException){throw e}
-                                            catch(e:Exception){error=e.message?:"Chưa mở được trình sửa phụ đề."}
-                                            finally{editingBusy=false}
-                                        }
-                                    },enabled=!editingBusy && loaded?.isLocal==true) {Text("Sửa phụ đề")}
-                                    if(loaded?.isLocal==false)Text("Tải ngoại tuyến để sửa phụ đề.",style=MaterialTheme.typography.bodySmall)
-                                    if(editProjectId.isNotBlank())TextButton(onClick={
-                                        editingBusy=true;error=""
-                                        scope.launch {
-                                            try {
-                                                val edit=withContext(Dispatchers.IO){VideoStore(this@MoviePlaybackActivity).load(editProjectId)}
-                                                library.refreshSourceSnapshot(movieId,episodeId,edit,editingRevision)
-                                                editProjectId="";editingRevision=""
-                                            } catch(e:CancellationException){throw e}
-                                            catch(e:Exception){error=e.message?:"Chưa cập nhật phụ đề; bản cũ vẫn được giữ."}
-                                            finally{editingBusy=false}
-                                        }
-                                    },enabled=!editingBusy){Text("Áp dụng phụ đề đã kiểm tra")}
+                            val source = currentEpisode?.source
+                            fun editSubtitles() {
+                                if (source == null || editingBusy || loaded?.isLocal != true) return
+                                editingBusy = true
+                                error = ""
+                                scope.launch {
+                                    try {
+                                        val edit = if (editProjectId.isBlank()) library.createSourceEditor(movieId, episodeId)
+                                            else withContext(Dispatchers.IO) { VideoStore(this@MoviePlaybackActivity).load(editProjectId) }
+                                        if (editProjectId.isBlank()) editingRevision = source.revision
+                                        editProjectId = edit.id
+                                        startActivity(Intent(this@MoviePlaybackActivity, VideoActivity::class.java)
+                                            .putExtra("project", edit.id).putExtra("ux_step", "review"))
+                                    } catch (cancel: CancellationException) {
+                                        throw cancel
+                                    } catch (failure: Exception) {
+                                        error = failure.message ?: "Chưa mở được trình sửa phụ đề."
+                                    } finally {
+                                        editingBusy = false
+                                    }
                                 }
                             }
+                            fun applySubtitles() {
+                                if (editingBusy) return
+                                editingBusy = true
+                                error = ""
+                                scope.launch {
+                                    try {
+                                        val edit = withContext(Dispatchers.IO) { VideoStore(this@MoviePlaybackActivity).load(editProjectId) }
+                                        library.refreshSourceSnapshot(movieId, episodeId, edit, editingRevision)
+                                        editProjectId = ""
+                                        editingRevision = ""
+                                    } catch (cancel: CancellationException) {
+                                        throw cancel
+                                    } catch (failure: Exception) {
+                                        error = failure.message ?: "Chưa cập nhật phụ đề; bản cũ vẫn được giữ."
+                                    } finally {
+                                        editingBusy = false
+                                    }
+                                }
+                            }
+                            MoviePlayerHeader(
+                                title = currentMovie?.title ?: loaded?.project?.title ?: if (movieId.isBlank()) "Xem kết quả" else "Xem phim",
+                                episodeTitle = currentEpisode?.title.orEmpty(),
+                                episodeNumber = episodeIndex + 1,
+                                episodeCount = episodes.size,
+                                previousEnabled = previousEpisode != null && !editingBusy,
+                                nextEnabled = nextEpisode != null && !editingBusy,
+                                onBack = ::finish,
+                                onPrevious = { adjacentEpisode(-1, currentPosition()) },
+                                onNext = { adjacentEpisode(1, currentPosition()) },
+                                subtitlesLocal = loaded?.isLocal?.takeIf { source != null },
+                                onEdit = ::editSubtitles,
+                                onApply = if (source != null && editProjectId.isNotBlank()) ::applySubtitles else null,
+                                editingBusy = editingBusy
+                            )
                         }
-                        if (error.isNotBlank()) {
-                            val retry: (() -> Unit)? = if (loaded == null && movieId.isNotBlank()) {{ loadAttempt++ }} else null
-                            StatusNotice(error,error=true,onRetry=retry)
-                        } else if (loaded == null) {
-                            Text("Đang mở video…", style=MaterialTheme.typography.bodySmall)
+                        if (loaded == null) {
+                            Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                if (error.isBlank()) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
+                                        Text("Đang mở video…", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                } else {
+                                    val retry: (() -> Unit)? = if (movieId.isNotBlank()) ({ loadAttempt++ }) else null
+                                    Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                                        StatusNotice(error, error = true, onRetry = retry)
+                                    }
+                                }
+                            }
+                        } else if (error.isNotBlank()) {
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) { StatusNotice(error, error = true) }
                         }
                         loaded?.let { selection ->
                             val modes = remember(selection.project) { movieSubtitleModes(selection.project) }
@@ -276,7 +316,7 @@ class MoviePlaybackActivity : ComponentActivity() {
                                             writeProgress(library, movieId, selection, position, flush = true)
                                         }
                                     },
-                                    onEpisodeSwipe = if (neighbors.isNotEmpty()) { direction, position ->
+                                    onEpisodeSwipe = if (previousEpisode != null || nextEpisode != null) { direction, position ->
                                         adjacentEpisode(direction, position)
                                     } else null,
                                     onPositionReader = { reader ->
@@ -284,8 +324,7 @@ class MoviePlaybackActivity : ComponentActivity() {
                                     },
                                     managesFullscreenWindow = false,
                                     movieControls = MoviePreviewControls(display, playbackSettings.appearance(), playbackSettings.controlTimeout,
-                                        ready(currentMovie?.let { movieAdjacentEpisode(it, episodeId, -1) }),
-                                        ready(currentMovie?.let { movieAdjacentEpisode(it, episodeId, 1) }),
+                                        ready(previousEpisode), ready(nextEpisode),
                                         onSettings = { showPlaybackSettings = true },
                                         onEnded = { position ->
                                             if (playbackSettings.autoNext) adjacentEpisode(1, position, onlyLocal = true)
@@ -399,6 +438,91 @@ class MoviePlaybackActivity : ComponentActivity() {
 
     private companion object {
         val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
+@Composable
+private fun MoviePlayerHeader(
+    title: String,
+    episodeTitle: String,
+    episodeNumber: Int,
+    episodeCount: Int,
+    previousEnabled: Boolean,
+    nextEnabled: Boolean,
+    onBack: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    subtitlesLocal: Boolean?,
+    onEdit: () -> Unit,
+    onApply: (() -> Unit)?,
+    editingBusy: Boolean
+) {
+    var subtitleMenuOpen by remember(episodeNumber, subtitlesLocal) { mutableStateOf(false) }
+    val hasEpisodeControls = episodeCount > 1 && episodeNumber in 1..episodeCount
+    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainer) {
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            val inlineEpisodeControls = maxWidth >= 560.dp && LocalDensity.current.fontScale <= 1.25f
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Về Kho phim")
+                    }
+                    Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (episodeTitle.isNotBlank() && episodeTitle != title) {
+                            Text(episodeTitle, style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    if (hasEpisodeControls && inlineEpisodeControls) {
+                        MovieEpisodeStepper(episodeNumber, episodeCount, previousEnabled, nextEnabled, onPrevious, onNext)
+                    }
+                    if (subtitlesLocal != null) {
+                        Box {
+                            IconButton(onClick = { subtitleMenuOpen = true }, enabled = !editingBusy) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "Tùy chọn phụ đề")
+                            }
+                            DropdownMenu(expanded = subtitleMenuOpen, onDismissRequest = { subtitleMenuOpen = false }) {
+                                if (subtitlesLocal) {
+                                    DropdownMenuItem(text = { Text("Sửa phụ đề") }, onClick = {
+                                        subtitleMenuOpen = false
+                                        onEdit()
+                                    })
+                                } else {
+                                    Text("Tải ngoại tuyến để sửa phụ đề.", Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                        style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (hasEpisodeControls && !inlineEpisodeControls) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        MovieEpisodeStepper(episodeNumber, episodeCount, previousEnabled, nextEnabled, onPrevious, onNext)
+                    }
+                }
+                if (onApply != null) {
+                    TextButton(onClick = onApply, enabled = !editingBusy, modifier = Modifier.align(Alignment.End)) {
+                        Text(if (editingBusy) "Đang xử lý…" else "Áp dụng phụ đề đã kiểm tra")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieEpisodeStepper(number: Int, total: Int, previousEnabled: Boolean, nextEnabled: Boolean,
+    onPrevious: () -> Unit, onNext: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onPrevious, enabled = previousEnabled) {
+            Icon(Icons.Outlined.SkipPrevious, contentDescription = "Tập trước")
+        }
+        Text("Tập $number / $total", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        IconButton(onClick = onNext, enabled = nextEnabled) {
+            Icon(Icons.Outlined.SkipNext, contentDescription = "Tập tiếp")
+        }
     }
 }
 

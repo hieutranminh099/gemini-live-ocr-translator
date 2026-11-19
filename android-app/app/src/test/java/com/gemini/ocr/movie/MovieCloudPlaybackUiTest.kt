@@ -81,6 +81,27 @@ class MovieCloudPlaybackUiTest {
         assertPlaybackIntent("ep-2")
     }
 
+    @Test fun movieCardResumesTheMostRecentUnfinishedEpisode() {
+        updateEpisodes(movie.episodes.map { episode ->
+            if (episode.id == "ep-2") episode.copy(positionMs = 4000, positionUpdatedAt = 5000) else episode
+        })
+        openLibrary()
+        scrollToMovieCard()
+        movieAction("Xem tiếp · 0:04").performScrollTo().assertIsEnabled().performClick()
+        assertPlaybackIntent("ep-2")
+    }
+
+    @Test fun expandedEpisodesCanScrollToTheEndOfALongSeries() {
+        updateEpisodes(List(65) { index -> MovieEpisode("ep-$index", "Synthetic episode $index", "", 10_000) })
+        openLibrary()
+        scrollToMovieCard()
+        movieAction("Danh sách tập").performScrollTo().performClick()
+        compose.onNodeWithTag("movie_episodes_${movie.id}").performScrollTo()
+            .performScrollToNode(hasText("Synthetic episode 64", substring = false))
+        movieAction("Synthetic episode 64").performScrollTo().assertIsEnabled().performClick()
+        assertPlaybackIntent("ep-64")
+    }
+
     @Test fun anotherGoogleAccountsMovieIsHidden() {
         compose.runOnIdle {
             val library = MovieLibrary.get(compose.activity)
@@ -94,6 +115,13 @@ class MovieCloudPlaybackUiTest {
     private fun openLibrary() {
         compose.onNodeWithText("Kho phim", useUnmergedTree = true).performClick()
         compose.onNodeWithTag("movie_library").assertExists()
+    }
+
+    private fun updateEpisodes(episodes: List<MovieEpisode>) = compose.runOnIdle {
+        movie = movie.copy(episodes = episodes)
+        val library = MovieLibrary.get(compose.activity)
+        library.save(movie)
+        manifestBefore = File(library.folder(movie.id), "movie.json").readBytes()
     }
 
     private fun scrollToMovieCard() {

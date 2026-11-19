@@ -11,6 +11,7 @@ import com.gemini.ocr.video.VideoCue
 import com.gemini.ocr.video.VideoProject
 import com.gemini.ocr.video.VideoStore
 import com.gemini.ocr.video.sync.VideoCloudSync
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
@@ -21,7 +22,9 @@ import org.robolectric.annotation.Config
 import org.robolectric.Shadows.shadowOf
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 
 /** Persistence/confirmation tests inject decoding; they do not claim native codec or Google verification. */
 @RunWith(RobolectricTestRunner::class)
@@ -38,6 +41,19 @@ class MovieLibraryTest {
     private fun episode(label:String)=File(context.cacheDir,"${UUID.randomUUID()}.mp4").let{file->
         file.writeText("fixture $label")
         MovieEpisode(UUID.randomUUID().toString(),label,file.absolutePath,1000)
+    }
+    @Test fun coldLibraryPublishesDurableMoviesOnlyAfterBackgroundCatalogLoad()=runBlocking {
+        val stored = library.confirm(UUID.randomUUID().toString(), "Saved", listOf(episode("current")))
+        val pending = ConcurrentLinkedQueue<Runnable>()
+        val dispatcher = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) { pending.add(block) }
+        }
+        val reopened = MovieLibrary(context, catalogDispatcher = dispatcher)
+        assertFalse(reopened.catalogLoaded.value)
+        assertTrue(reopened.movies.value.isEmpty())
+        requireNotNull(pending.poll()).run()
+        assertTrue(reopened.catalogLoaded.value)
+        assertEquals(stored, reopened.movies.value.single { it.id == stored.id })
     }
     @Test fun fivePartsStayOutOfLibraryUntilExplicitConfirmationAndRepeatedConfirmationIsIdempotent()=runBlocking {
         val id=UUID.randomUUID().toString();val episodes=(1..5).map{episode("EP$it")}

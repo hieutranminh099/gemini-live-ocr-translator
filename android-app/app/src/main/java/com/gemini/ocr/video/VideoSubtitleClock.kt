@@ -7,18 +7,20 @@ import kotlin.math.abs
 
 /** One display-frame request per player owner. No elapsed wall clock estimates media time. */
 internal interface VideoFrameScheduler {
-    fun request(frame:()->Unit)
+    fun request(delayMs: Long, frame: () -> Unit)
     fun cancel()
 }
 
 internal class AndroidVideoFrameScheduler : VideoFrameScheduler {
     private val choreographer=Choreographer.getInstance()
     private var pending:Choreographer.FrameCallback?=null
-    override fun request(frame:()->Unit) {
+    override fun request(delayMs: Long, frame: () -> Unit) {
         check(pending==null)
         lateinit var callback:Choreographer.FrameCallback
         callback=Choreographer.FrameCallback { if(pending===callback){pending=null;frame()} }
-        pending=callback;choreographer.postFrameCallback(callback)
+        pending=callback
+        if (delayMs == 0L) choreographer.postFrameCallback(callback)
+        else choreographer.postFrameCallbackDelayed(callback, delayMs)
     }
     override fun cancel(){pending?.let{choreographer.removeFrameCallback(it)};pending=null}
 }
@@ -29,32 +31,50 @@ internal class VideoSubtitleClock(
     private val position:()->Long,
     private val playing:()->Boolean,
     private val ended:()->Boolean,
+    private val delayAfterPosition: (Long) -> Long = { 0L },
     private val publish:(Long,Boolean)->Unit
 ) {
     private var enabled=false
     private var released=false
     private var scheduled=false
+    private var delayedFrame = false
     private var generation=0L
     fun resume(){if(released)return;enabled=true;signal()}
     fun suspend(){enabled=false;cancelFrame()}
     fun release(){released=true;enabled=false;cancelFrame()}
     fun signal(){
         if(!enabled || released)return
-        publish(position().coerceAtLeast(0),ended())
-        if(!enabled || released)return
-        if(playing() && !ended())schedule() else cancelFrame()
+        // A seek, speed change or timeline edit can move a subtitle boundary ahead of a delayed tick.
+        if (delayedFrame) cancelFrame()
+        tick()
     }
-    private fun schedule(){
+    private fun tick() {
+        val current = position().coerceAtLeast(0)
+        publish(current,ended())
+        if(!enabled || released)return
+        if(playing() && !ended())schedule(delayAfterPosition(current)) else cancelFrame()
+    }
+    private fun schedule(delayMs: Long){
         if(scheduled)return
         scheduled=true
+        delayedFrame = delayMs > 0
         val owner=generation
-        scheduler.request {
+        scheduler.request(delayMs) {
             if(released || !enabled || owner!=generation)return@request
             scheduled=false
-            signal()
+            delayedFrame=false
+            tick()
         }
     }
-    private fun cancelFrame(){generation++;if(scheduled)scheduler.cancel();scheduled=false}
+    private fun cancelFrame(){generation++;if(scheduled)scheduler.cancel();scheduled=false;delayedFrame=false}
+}
+
+/** Sleep between boundaries, then sample actual media time each display frame near a transition. */
+internal fun movieSubtitlePollDelayMs(position: Long, boundary: Long?, speed: Float): Long {
+    if (!speed.isFinite() || speed <= 0f) return 0L
+    if (boundary == null) return 200L
+    val untilBoundaryMs = ((boundary - position) / speed.toDouble()).toLong()
+    return (untilBoundaryMs - 80L).coerceIn(0L, 200L)
 }
 
 /** Callback belongs to its player, even while Compose replaces the currently selected project. */

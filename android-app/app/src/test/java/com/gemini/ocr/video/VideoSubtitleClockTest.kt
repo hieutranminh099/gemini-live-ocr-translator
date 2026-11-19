@@ -7,7 +7,13 @@ class VideoSubtitleClockTest {
     private class Frames:VideoFrameScheduler {
         var pending:(()->Unit)?=null
         var requests=0
-        override fun request(frame:()->Unit){check(pending==null);pending=frame;requests++}
+        var delayMs = 0L
+        override fun request(delayMs: Long, frame: () -> Unit) {
+            check(pending == null)
+            this.delayMs = delayMs
+            pending = frame
+            requests++
+        }
         override fun cancel(){pending=null}
         fun fire(){val callback=requireNotNull(pending);pending=null;callback()}
     }
@@ -84,6 +90,38 @@ class VideoSubtitleClockTest {
         assertEquals(1,frames.requests)
         frames.fire();assertEquals(2,frames.requests)
         clock.release()
+    }
+    @Test fun seekOrSpeedChangeReplacesDelayedWakeAndStillShowsShortCues() {
+        val frames = Frames()
+        var position = 100L
+        var speed = 1f
+        val rows = listOf(VideoCue("short", 600, 665, "甲", "Một"))
+        val samples = mutableListOf<String?>()
+        val clock = VideoSubtitleClock(frames, { position }, { true }, { false },
+            delayAfterPosition = { ms -> movieSubtitlePollDelayMs(ms, 600L.takeIf { ms < 600 } ?: 665L, speed) }
+        ) { ms, _ -> samples += VideoTimeline.active(rows, ms)?.id }
+        clock.resume()
+        assertEquals(200L, frames.delayMs)
+        val delayed = requireNotNull(frames.pending)
+        speed = 2f
+        position = 560
+        clock.signal()
+        assertEquals(0L, frames.delayMs)
+        val replacement = requireNotNull(frames.pending)
+        delayed()
+        assertSame(replacement, frames.pending)
+        for (ms in listOf(600L, 648L, 665L)) {
+            position = ms
+            frames.fire()
+        }
+        assertEquals(listOf(null, null, "short", "short", null), samples)
+        clock.release()
+    }
+    @Test fun playbackWakesEarlyAtTheCurrentRateAndStillPollsWithoutSubtitles() {
+        assertEquals(200L, movieSubtitlePollDelayMs(100, null, 1f))
+        assertEquals(200L, movieSubtitlePollDelayMs(100, 1_000, 2f))
+        assertEquals(20L, movieSubtitlePollDelayMs(100, 300, 2f))
+        assertEquals(0L, movieSubtitlePollDelayMs(100, 260, 2f))
     }
     @Test fun positionCallbackCanCloseTheScreenWithoutReadingAReleasedPlayer(){
         val frames=Frames();var released=false;var updates=0

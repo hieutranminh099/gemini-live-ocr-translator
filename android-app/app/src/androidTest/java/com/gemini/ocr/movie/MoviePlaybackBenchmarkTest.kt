@@ -5,10 +5,14 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
+import android.view.FrameMetrics
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -33,6 +37,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -53,6 +58,7 @@ class MoviePlaybackBenchmarkTest {
         val folder=File(context.getExternalFilesDir(null),"playback-bench")
         val report=JSONObject().put("completed",false)
         val library=MovieLibrary.get(context)
+        waitFor("movie catalog"){library.movies.value.any { it.episodes.size == 3 }}
         val original=library.movies.value.first{it.episodes.size==3}
         library.save(original.copy(title="Rename Fixture"))
         library.progress(original.id,original.episodes[0].id,9000)
@@ -83,6 +89,7 @@ class MoviePlaybackBenchmarkTest {
             waitFor("rename persisted"){library.find(before.id)?.title=="Phim đổi tên thử"}
             device.findObject(By.clazz("android.widget.EditText")).text="Phim đổi tên thử"
             assertTrue(device.wait(Until.hasObject(By.text("Phim đổi tên thử")),5000))
+            assertTrue(device.takeScreenshot(File(folder,"library.png")))
             val renamed=library.find(before.id)!!
             assertEquals(before.episodes,renamed.episodes)
             assertEquals(before.cloudId,renamed.cloudId)
@@ -100,7 +107,25 @@ class MoviePlaybackBenchmarkTest {
             waitFor("resume"){active.get()?.let{it.second in ready}==true}
             main{active.get()!!.second.pause();assertTrue(kotlin.math.abs(active.get()!!.second.currentPosition-9000)<600)}
             assertTrue(device.hasObject(By.text("Phim đổi tên thử")))
+            assertTrue(device.hasObject(By.desc("Về Kho phim")) || device.hasObject(By.text("Về Kho phim")))
+            assertTrue(device.takeScreenshot(File(folder,"player.png")))
             report.put("resume_and_player_title",true)
+            fun pressEpisode(label: String) {
+                waitFor("visible episode control") {
+                    device.hasObject(By.desc(label)) || device.hasObject(By.text(label))
+                }
+                checkNotNull(device.findObject(By.desc(label)) ?: device.findObject(By.text(label))).click()
+            }
+            pressEpisode("Tập tiếp")
+            waitFor("visible next control advanced the episode") {
+                active.get()?.let { it.first == before.episodes[1].id && it.second in ready } == true
+            }
+            pressEpisode("Tập trước")
+            waitFor("visible previous control restored the episode") {
+                active.get()?.let { it.first == before.episodes[0].id && it.second in ready } == true
+            }
+            main { active.get()!!.second.pause() }
+            report.put("visible_episode_controls", true)
             // Three navigation choices before source I/O has time to finish: final choice must win.
             playerScreen.onActivity { a ->
                 val view=views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
@@ -111,7 +136,8 @@ class MoviePlaybackBenchmarkTest {
             main{active.get()!!.second.pause()}
             report.put("rapid_next_next_previous",true)
             playerScreen.onActivity { a->views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single().onDoubleTap() }
-            assertTrue(device.wait(Until.hasObject(By.desc("Thoát toàn màn hình")),3000) || !device.hasObject(By.text("Về Kho phim")))
+            assertTrue(device.wait(Until.hasObject(By.desc("Thoát toàn màn hình")),3000) ||
+                (!device.hasObject(By.text("Về Kho phim")) && !device.hasObject(By.desc("Về Kho phim"))))
             device.pressBack()
             report.put("fullscreen_back",true)
             device.takeScreenshot(File(folder,"renamed-player.png"))
@@ -122,6 +148,41 @@ class MoviePlaybackBenchmarkTest {
             playerScreen?.close();screen?.close();VideoPreviewDiagnostics.onPlayerForTest=null
             File(folder,"rename.json").writeText(report.toString(2))
         }
+    }
+
+    @Test fun coldLibraryCatalog(): Unit = runBlocking {
+        val context = ins.targetContext
+        require(context.packageName == "com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
+        val folder = File(context.getExternalFilesDir(null), "playback-bench")
+        val fixture = File(context.filesDir, "playback-fixture.mp4")
+        require(fixture.isFile)
+        val uri = Uri.fromFile(fixture)
+        val metadata = VideoDecoder.metadata(context, uri)
+        val (sha, bytes) = MovieSourceAccess.inspect(context, uri)
+        val project = VideoProject(UUID.randomUUID().toString(), "Catalog fixture", uri.toString(), 2_160_000L,
+            metadata.width, metadata.height, scanMs = 2_160_000L, stage = VideoStage.REVIEW,
+            cues = List(5065) { i -> VideoCue("catalog-$i", i * 420L, i * 420L + 400L, "字幕 $i", "Câu $i", approved = true) })
+        val snapshot = MovieSourceSnapshot.freeze(project, sha, bytes)
+        val seeded = MovieLibrary(context)
+        val movieIds = List(8) { index ->
+            val id = UUID.randomUUID().toString()
+            seeded.save(MovieRecord(id, "Phim thử ${index + 1}", listOf(
+                MovieEpisode("catalog-episode", "Tập 1", fixture.path, project.durationMs, source = snapshot))))
+            id
+        }
+        var onMainNs = 0L
+        var started = 0L
+        lateinit var library: MovieLibrary
+        main {
+            started = SystemClock.elapsedRealtimeNanos()
+            library = MovieLibrary(context)
+            onMainNs = SystemClock.elapsedRealtimeNanos() - started
+        }
+        waitFor("catalog contains all fixtures") { library.movies.value.count { it.id in movieIds } == movieIds.size }
+        assertTrue(library.movies.value.filter { it.id in movieIds }.all { it.episodes.single().source?.cues?.size == 5065 })
+        File(folder, "cold-library.json").writeText(JSONObject().put("catalog_movies", movieIds.size)
+            .put("cues_per_movie", 5065).put("main_thread_ns", onMainNs)
+            .put("loaded_ns", SystemClock.elapsedRealtimeNanos() - started).toString())
     }
 
     @Test fun measuredPlayback():Unit=runBlocking {
@@ -136,7 +197,8 @@ class MoviePlaybackBenchmarkTest {
         val trace=CopyOnWriteArrayList<JSONObject>()
         MoviePlaybackTrace.observer={stage,ns->trace.add(JSONObject().put("stage",stage).put("ns",ns))}
         val library=MovieLibrary.get(context)
-        val fixture=File(folder,"playback.mp4");require(fixture.isFile)
+        val fixture = File(context.filesDir, "playback-input.mp4").takeIf { it.isFile } ?: File(folder, "playback.mp4")
+        require(fixture.isFile)
         val owned=File(context.filesDir,"playback-fixture.mp4")
         fixture.copyTo(owned,true)
         val metadata=VideoDecoder.metadata(context,Uri.fromFile(owned))
@@ -158,6 +220,14 @@ class MoviePlaybackBenchmarkTest {
         val drops=AtomicLong()
         val observed=AtomicReference<VideoPreviewFrame?>()
         val subtitleUpdates=AtomicLong()
+        val collector = HandlerThread("movie-frame-metrics").apply { start() }
+        val collectFrameMetrics = AtomicBoolean(false)
+        val frameDurations = CopyOnWriteArrayList<Long>()
+        val frameListener = Window.OnFrameMetricsAvailableListener { _, frame, _ ->
+            if (collectFrameMetrics.get()) {
+                frame.getMetric(FrameMetrics.TOTAL_DURATION).takeIf { it > 0 }?.let(frameDurations::add)
+            }
+        }
         VideoPreviewDiagnostics.onFrameForTest={observed.set(it);subtitleUpdates.incrementAndGet()}
         VideoPreviewDiagnostics.onPlayerForTest={id,player->
             if(player is ExoPlayer) {
@@ -182,13 +252,22 @@ class MoviePlaybackBenchmarkTest {
                 waitFor("opening first frame"){active.get()?.second?.let{rendered.containsKey(it)}==true}
                 val row=JSONObject().put("round",round+1).put("open_ns",rendered[active.get()!!.second]!!-start)
                 runs.put(row)
+                scenario!!.onActivity { activity ->
+                    activity.window.addOnFrameMetricsAvailableListener(frameListener, Handler(collector.looper))
+                }
+                frameDurations.clear()
                 val cpuStart=android.os.Process.getElapsedCpuTime()
                 val updateStart=subtitleUpdates.get()
                 val dwellStart=SystemClock.elapsedRealtime()
+                collectFrameMetrics.set(true)
                 Thread.sleep(2000)
+                collectFrameMetrics.set(false)
+                scenario!!.onActivity { activity -> activity.window.removeOnFrameMetricsAvailableListener(frameListener) }
                 row.put("playing_wall_ms",SystemClock.elapsedRealtime()-dwellStart)
                     .put("playing_cpu_ms",android.os.Process.getElapsedCpuTime()-cpuStart)
                     .put("subtitle_update_callbacks",subtitleUpdates.get()-updateStart)
+                    .put("window_frames", frameDurations.size)
+                    .put("window_frames_over_16ms", frameDurations.count { it > 16_666_667L })
                 val seeks=JSONArray();row.put("seeks",seeks)
                 for(paused in listOf(false,true)) {
                     val player=active.get()!!.second
@@ -247,6 +326,7 @@ class MoviePlaybackBenchmarkTest {
         } catch(t:Throwable) {report.put("error",t.stackTraceToString());throw t}
         finally {
             scenario?.close();VideoPreviewDiagnostics.onPlayerForTest=null;VideoPreviewDiagnostics.onFrameForTest=null;MoviePlaybackTrace.observer=null
+            collector.quitSafely()
             report.put("trace",JSONArray(trace))
             output.writeText(report.toString(2))
         }
