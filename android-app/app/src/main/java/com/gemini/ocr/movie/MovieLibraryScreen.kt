@@ -116,10 +116,12 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
     var deleteId by rememberSaveable { mutableStateOf("") }
     var deleteDraftId by rememberSaveable { mutableStateOf("") }
     var offlineId by rememberSaveable { mutableStateOf("") }
+    var removingMediaFor by remember { mutableStateOf<String?>(null) }
     var showAllProcessing by rememberSaveable { mutableStateOf(false) }
-    fun action(drive: Boolean = false, block: suspend () -> Unit): Job? {
+    fun action(drive: Boolean = false, removeMediaFor: String? = null, block: suspend () -> Unit): Job? {
         if (working) return null
         working = true
+        removingMediaFor = removeMediaFor
         notice = ""
         noticeError = false
         importError = ""
@@ -132,7 +134,10 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
                 if (drive) driveError = message
                 else { noticeError = true; notice = message }
             }
-            finally { working = false }
+            finally {
+                removingMediaFor = null
+                working = false
+            }
         }
     }
     val moviePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -197,8 +202,11 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
             context.startActivity(intent)
         }
     }
-    fun play(movie: MovieRecord, episode: MovieEpisode) = context.startActivity(Intent(context, MoviePlaybackActivity::class.java)
-        .putExtra("movie", movie.id).putExtra("episode", episode.id))
+    fun play(movie: MovieRecord, episode: MovieEpisode) {
+        if (removingMediaFor == movie.id) return
+        context.startActivity(Intent(context, MoviePlaybackActivity::class.java)
+            .putExtra("movie", movie.id).putExtra("episode", episode.id))
+    }
     OceanTheme {
     Surface(modifier.fillMaxSize(), color = OceanColors.Base) {
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -263,7 +271,7 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
             }
             items(continueWatching, key = { "continue-${it.first.id}" }, contentType = { "continue" }) { (movie, episode) ->
                 val playable = episodePlayable(library, episode, movie.cloudId.isNotBlank() && account.accountEmail.isNotBlank())
-                OutlinedButton(onClick = { play(movie, episode) }, enabled = playable == true,
+                OutlinedButton(onClick = { play(movie, episode) }, enabled = playable == true && removingMediaFor != movie.id,
                     modifier = Modifier.fillMaxWidth().testTag("movie_continue_${movie.id}")) {
                     Icon(Icons.Outlined.PlayArrow, null)
                     Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -357,7 +365,7 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
                 }
             }
             items(visible, key = { "movie-${it.first.id}" }, contentType = { "movie" }) { (movie, episodes) ->
-                MovieCard(movie, episodes, !working, account.accountEmail.isNotBlank(), Modifier.fillMaxWidth(),
+                MovieCard(movie, episodes, !working, removingMediaFor != movie.id, account.accountEmail.isNotBlank(), Modifier.fillMaxWidth(),
                     onPlay = { play(movie, it) }, onDownload = { action { cloud.download(movie.id) } },
                     onSync = { action(drive = true) { withContext(Dispatchers.IO) { cloud.enqueue(movie.id) } } },
                     onAddEpisodes = { action {
@@ -407,14 +415,14 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
         text = { Text("Xóa bản trong Kho phim trên máy. Bản trên Google Drive và dự án dịch được giữ.") },
         confirmButton = { TextButton(onClick = {
             val id = deleteId; deleteId = ""
-            action { withContext(Dispatchers.IO) { library.remove(id) } }
+            action(removeMediaFor = id) { withContext(Dispatchers.IO) { library.remove(id) } }
         }) { Text("Xóa") } },
         dismissButton = { TextButton(onClick = { deleteId = "" }) { Text("Giữ lại") } })
     if (offlineId.isNotBlank()) AlertDialog(onDismissRequest = { offlineId = "" }, title = { Text("Giải phóng video ngoại tuyến?") },
         text = { Text("Chỉ xóa bản video của Kho phim đã đồng bộ. Bạn có thể tải lại từ Google Drive.") },
         confirmButton = { TextButton(onClick = {
             val id = offlineId; offlineId = ""
-            action { withContext(Dispatchers.IO) { library.removeOffline(id) } }
+            action(removeMediaFor = id) { withContext(Dispatchers.IO) { library.removeOffline(id) } }
         }) { Text("Giải phóng") } },
         dismissButton = { TextButton(onClick = { offlineId = "" }) { Text("Giữ lại") } })
     }
@@ -455,7 +463,8 @@ private fun ProcessingMovieCard(batch: BatchProject, modifier: Modifier, deleteE
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MovieCard(movie: MovieRecord, visibleEpisodes: List<MovieEpisode>, enabled: Boolean, connected: Boolean, modifier: Modifier,
+private fun MovieCard(movie: MovieRecord, visibleEpisodes: List<MovieEpisode>, enabled: Boolean, playbackEnabled: Boolean,
+    connected: Boolean, modifier: Modifier,
     onPlay: (MovieEpisode) -> Unit, onDownload: () -> Unit, onSync: () -> Unit, onAddEpisodes: () -> Unit,
     onRename: () -> Unit, onRemoveOffline: () -> Unit, onDelete: () -> Unit, onReorder: (List<String>) -> Unit
 ) {
@@ -519,7 +528,7 @@ private fun MovieCard(movie: MovieRecord, visibleEpisodes: List<MovieEpisode>, e
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (movie.episodes.size > 1) Text(recommended.title, style = MaterialTheme.typography.bodyMedium,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Button(onClick = { onPlay(recommended) }, enabled = canPlay == true,
+                    Button(onClick = { onPlay(recommended) }, enabled = playbackEnabled && canPlay == true,
                         modifier = Modifier.fillMaxWidth().testTag("movie_play_${movie.id}")) {
                         Icon(Icons.Outlined.PlayArrow, null)
                         Spacer(Modifier.width(8.dp))
@@ -531,7 +540,7 @@ private fun MovieCard(movie: MovieRecord, visibleEpisodes: List<MovieEpisode>, e
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (nextShortcut != null && canPlayNext == true)
-                    OutlinedButton(onClick = { onPlay(nextShortcut) }) { Text("Tập tiếp theo") }
+                    OutlinedButton(onClick = { onPlay(nextShortcut) }, enabled = playbackEnabled) { Text("Tập tiếp theo") }
                 if (movie.cloudId.isNotBlank()) OutlinedButton(onClick = onDownload, enabled = enabled && connected) {
                     Icon(Icons.Outlined.Download, null); Spacer(Modifier.width(6.dp)); Text("Tải ngoại tuyến")
                 }
@@ -546,7 +555,7 @@ private fun MovieCard(movie: MovieRecord, visibleEpisodes: List<MovieEpisode>, e
                         nextShortcut?.id -> canPlayNext
                         else -> episodePlayable(library, episode, canStream)
                     }
-                    TextButton(onClick = { onPlay(episode) }, enabled = playable == true,
+                    TextButton(onClick = { onPlay(episode) }, enabled = playbackEnabled && playable == true,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Icon(Icons.Outlined.PlayArrow, null)
                         Spacer(Modifier.width(8.dp))
