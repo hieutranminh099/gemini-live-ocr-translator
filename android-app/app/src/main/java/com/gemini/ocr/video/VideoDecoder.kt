@@ -23,6 +23,9 @@ import kotlin.math.roundToInt
 
 /** Sequential decoder. Retained subtitle samples contain bounded luma, not full RGB frames. */
 object VideoDecoder {
+    private const val INPUT_BURST_LIMIT = 8
+    private const val OUTPUT_TIMEOUT_US = 10_000L
+
     /** Disabled outside debug builds; native verification observes its own public fixture only. */
     internal var draftObserverForTest:((Long,OcrVideoDraft)->Unit)?=null
     fun metadata(context:Context,uri:Uri):VideoMetadata {
@@ -132,6 +135,7 @@ object VideoDecoder {
         var uncertainObservations=priorMetrics.optLong("uncertain_observations")
         var multilineObservations=priorMetrics.optLong("multiline_observations")
         var inputSamples=priorMetrics.optLong("input_samples")
+        var maxInputBurst=priorMetrics.optInt("max_input_burst")
         var outputBuffers=priorMetrics.optLong("output_buffers")
         var zeroSizeOutputs=priorMetrics.optLong("zero_size_outputs")
         var lastInputMs=priorMetrics.optLong("last_input_ms",-1)
@@ -146,7 +150,8 @@ object VideoDecoder {
             return JSONObject().put("schema",1).put("source_video_ms",sourceMs)
                 .put("decoded_frames",decodedFrames).put("crop_conversions",cropConversions)
                 .put("luma_buffer_reuses",lumaBufferReuses)
-                .put("input_samples",inputSamples).put("output_buffers",outputBuffers).put("zero_size_outputs",zeroSizeOutputs)
+                .put("input_samples",inputSamples).put("max_input_burst",maxInputBurst)
+                .put("output_buffers",outputBuffers).put("zero_size_outputs",zeroSizeOutputs)
                 .put("last_input_ms",lastInputMs).put("max_output_ms",maxOutputMs).put("video_track_duration_ms",trackDurationMs)
                 .put("video_raw_drafts",videoDrafts)
                 .put("recognition_requests",recognitionRequests).put("refinement_requests",refinementRequests)
@@ -224,17 +229,29 @@ object VideoDecoder {
             while(!outputEnded){
                 currentCoroutineContext().ensureActive();val gateAt=SystemClock.elapsedRealtime();gate()
                 val waited=SystemClock.elapsedRealtime()-gateAt;watchdog.excludeWait(waited);gateMs+=waited
-                if(!inputEnded){val index=codecStep("dequeue_input"){decoder.dequeueInputBuffer(10000)}
-                    if(index>=0){val buffer=codecStep("read_input"){decoder.getInputBuffer(index)}
-                            ?:throw VideoDecodeException("FRAME_NULL","read_input",lastEmitted)
-                        val size=codecStep("read_input"){extractor.readSampleData(buffer,0)}
-                        if(size<0){codecStep("queue_input"){decoder.queueInputBuffer(index,0,0,0,MediaCodec.BUFFER_FLAG_END_OF_STREAM)};inputEnded=true}
-                        else {val time=codecStep("read_input"){extractor.sampleTime};lastInputMs=time/1000;inputSamples++
-                            codecStep("queue_input"){decoder.queueInputBuffer(index,0,size,time,0)}
-                            codecStep("advance_input"){extractor.advance()}}
+                // Feed the codec's available inputs without waiting on a full queue. A bounded
+                // burst keeps its worker busy and returns to the Live/cancellation gate promptly.
+                var queued = 0
+                while (!inputEnded && queued < INPUT_BURST_LIMIT) {
+                    val index = codecStep("dequeue_input") { decoder.dequeueInputBuffer(0) }
+                    if (index < 0) break
+                    val buffer = codecStep("read_input") { decoder.getInputBuffer(index) }
+                        ?: throw VideoDecodeException("FRAME_NULL", "read_input", lastEmitted)
+                    val size = codecStep("read_input") { extractor.readSampleData(buffer, 0) }
+                    if (size < 0) {
+                        codecStep("queue_input") { decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) }
+                        inputEnded = true
+                    } else {
+                        val time = codecStep("read_input") { extractor.sampleTime }
+                        lastInputMs = time / 1000
+                        inputSamples++
+                        queued++
+                        codecStep("queue_input") { decoder.queueInputBuffer(index, 0, size, time, 0) }
+                        codecStep("advance_input") { extractor.advance() }
                     }
                 }
-                val index=codecStep("dequeue_output"){decoder.dequeueOutputBuffer(info,10000)}
+                maxInputBurst = maxOf(maxInputBurst, queued)
+                val index=codecStep("dequeue_output"){decoder.dequeueOutputBuffer(info,OUTPUT_TIMEOUT_US)}
                 var captured:VideoOcrFrame?=null
                 if(index>=0){watchdog.progress();val ms=info.presentationTimeUs/1000
                     VideoCodecBoundary.withRelease(read={

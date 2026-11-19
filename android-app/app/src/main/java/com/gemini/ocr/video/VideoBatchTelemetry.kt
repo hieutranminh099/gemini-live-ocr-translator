@@ -91,7 +91,9 @@ internal class VideoBatchTelemetry(context: Context, id: String) {
             tokens.thinkingTokens?.let { add("thinking_tokens", it.toLong()) }
             tokens.cachedInputTokens?.let { add("cached_input_tokens", it.toLong()) }
         } else add("responses_without_token_usage")
-        flush()
+        // A normal response can share the next dispatch or worker-exit write. Publish
+        // incomplete responses immediately so the live recovery diagnostics stay current.
+        if (result.missingIds.isNotEmpty() || result.truncated) flush()
     }
     @Synchronized fun flush() {
         values.put("updated_ms", System.currentTimeMillis())

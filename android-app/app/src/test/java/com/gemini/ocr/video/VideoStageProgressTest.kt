@@ -45,6 +45,9 @@ class VideoStageProgressTest {
         }
         assertEquals(2, VideoStageProgress.translatedCueCount(p))
         assertFalse(VideoStageProgress.translationComplete(p))
+        val measured = VideoStageProgress.measureText(p, BatchPipelineStage.TRANSLATE)
+        assertEquals(VideoStageProgress.TextCheckpoint(completedCues = 3L, workingPercent = 50), measured)
+        assertEquals(50, VideoStageProgress.percent(p, BatchPipelineStage.TRANSLATE, measured))
     }
 
     @Test fun completeTranslationAndFinalizationRemainDistinctAcrossSerialization() {
@@ -79,6 +82,10 @@ class VideoStageProgressTest {
                 short.copy(id = "polished", startMs = 600, endMs = 800, polishedVi = "Chào bạn")
             ))
         assertEquals(50, VideoStageProgress.percent(p, BatchPipelineStage.POLISH))
+        val measured = VideoStageProgress.measureText(p, BatchPipelineStage.POLISH)
+        assertEquals(VideoStageProgress.TextCheckpoint(completedCues = 1L, workingPercent = 50), measured)
+        assertEquals(100, VideoStageProgress.percent(p.copy(pipeline = p.pipeline.record(
+            BatchPipelineStage.POLISH, "COMPLETE", 1)), BatchPipelineStage.POLISH, measured))
         assertEquals(33, VideoStageProgress.percent(
             p.copy(translationMode = VideoTranslationMode.OFFLINE), BatchPipelineStage.POLISH))
     }

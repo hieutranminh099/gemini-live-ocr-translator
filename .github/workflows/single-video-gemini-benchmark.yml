@@ -2,7 +2,7 @@ name: Single-video Android benchmark
 
 on:
   push:
-    branches: [perf/single-video, perf/long-video]
+    branches: [perf/single-video, perf/long-video, perf/long-video-next]
 
 permissions:
   contents: read
@@ -75,7 +75,7 @@ jobs:
           sudo chmod a+rw /dev/kvm
       - name: Verify the shared benchmark clip
         run: |
-          if [[ "$GITHUB_REF_NAME" == perf/long-video ]]; then
+          if [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
             echo 'bfbc8fe36aad8e052e15cd875ddf043c99a029e6ef60c57a443e3513834306b4  scripts/fixtures/long-video-ocr-benchmark.mp4' | sha256sum --check
           else
             echo '333caae67757141123c37515fea062892d5e9f0815f8bea3e55642699789f727  scripts/fixtures/single-video-ocr-benchmark.mp4' | sha256sum --check
@@ -89,8 +89,11 @@ jobs:
           base_package=com.gemini.ocr.perfbase
           next_package=com.gemini.ocr.perfnext
           verification_args=()
-          if [[ "$GITHUB_REF_NAME" == perf/long-video ]]; then
+          if [[ "$GITHUB_REF_NAME" == perf/long-video* ]]; then
             baseline_sha=46d58e7a93f54ab60a633f422683d26298a79cad
+            if [[ "$GITHUB_REF_NAME" == perf/long-video-next ]]; then
+              baseline_sha=bb22bf5e6ad6845118303c6f6100a4c674332302
+            fi
             test_class=LongVideoBenchmarkTest
             base_package=com.gemini.ocr.codexbench
             next_package=com.gemini.ocr.batchunified186
@@ -129,9 +132,11 @@ jobs:
         run: |
           bash scripts/run_single_video_gemini_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$GITHUB_WORKSPACE/scripts/fixtures/single-video-ocr-benchmark.mp4"
       - name: Audit native OCR, near-end resume and local save for a 36-minute video
-        if: github.ref_name == 'perf/long-video'
+        if: github.ref_name != 'perf/single-video'
         run: |
-          bash scripts/run_long_video_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results"
+          trials=1
+          if [[ "$GITHUB_REF_NAME" == perf/long-video-next ]]; then trials=3; fi
+          bash scripts/run_long_video_benchmark.sh "$RUNNER_TEMP/baseline" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/results" "$trials"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -314,8 +314,21 @@ class VideoJobs internal constructor(
             val previousStageError = pipelineStage?.let { p.pipeline.task(it).errorCode }.orEmpty()
             val checkpointEncoding = VideoCheckpointEncoding()
             var normalizedCheckpointCues: List<VideoCue>? = null
+            var textCheckpoint: VideoStageProgress.TextCheckpoint? = null
+            var lastMemorySampleAt = -2_000L
+            fun unstagedTranslationPercent(cues: List<VideoCue>, hybrid: Boolean): Int =
+                if (pipelineStage == null) cues.count { VideoTranslationPlan.isComplete(it, hybrid) } * 100 / cues.size
+                else p.progress
             suspend fun persist(next:VideoProject){
-                val now=SystemClock.elapsedRealtime();val info=Debug.MemoryInfo();Debug.getMemoryInfo(info)
+                val now = SystemClock.elapsedRealtime()
+                val statusChanged = pipelineStage != null &&
+                    p.pipeline.task(pipelineStage).status != next.pipeline.task(pipelineStage).status
+                // PSS is a diagnostic sample. Reading page accounting for every frame
+                // checkpoint is more expensive than measuring periodically and at state changes.
+                val pss = if (now - lastMemorySampleAt >= 2_000L || p.stage != next.stage || statusChanged) {
+                    lastMemorySampleAt = now
+                    Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }.totalPss.toLong()
+                } else null
                 val delta=(now-lastTick).coerceAtLeast(0)
                 val checkpointAt=System.nanoTime()
                 // Dispatch and wait checkpoints may only change metadata. Their cue snapshot
@@ -326,15 +339,16 @@ class VideoJobs internal constructor(
                     else -> next
                 }
                 if(pipelineStage!=null){
-                    val checkpoint=when(pipelineStage){BatchPipelineStage.EXTRACT->captured.scanMs
-                        BatchPipelineStage.TRANSLATE->captured.cues.count{VideoTranslationPlan.isComplete(it,captured.translationMode==VideoTranslationMode.HYBRID)}.toLong()
-                        BatchPipelineStage.POLISH->captured.cues.count{it.polishedVi.isNotBlank() || it.protectedText}.toLong()
-                        else->captured.cues.size.toLong()}
+                    if (captured.cues !== normalizedCheckpointCues || captured.sourceMode != p.sourceMode ||
+                        captured.translationMode != p.translationMode || captured.offlinePolishPolicy != p.offlinePolishPolicy)
+                        textCheckpoint = VideoStageProgress.measureText(captured, pipelineStage)
+                    val checkpoint = if (pipelineStage == BatchPipelineStage.EXTRACT) captured.scanMs
+                        else textCheckpoint?.completedCues ?: captured.cues.size.toLong()
                     captured=captured.copy(pipeline=captured.pipeline.copy(stages=captured.pipeline.stages+
                         (pipelineStage to captured.pipeline.task(pipelineStage).copy(lastCheckpoint=checkpoint))))
+                    captured = captured.copy(progress = VideoStageProgress.percent(captured, pipelineStage, textCheckpoint))
                 }
-                if (pipelineStage != null) captured = captured.copy(progress = VideoStageProgress.percent(captured, pipelineStage))
-                p=store.save(captured.copy(elapsedMs=p.elapsedMs+delta,maxPssKiB=maxOf(p.maxPssKiB,info.totalPss.toLong()),resumeStage=intended,
+                p=store.save(captured.copy(elapsedMs=p.elapsedMs+delta,maxPssKiB=maxOf(p.maxPssKiB,pss ?: 0L),resumeStage=intended,
                     extractionElapsedMs=p.extractionElapsedMs+if(timingStage==VideoStage.EXTRACTING)delta else 0,
                     translationElapsedMs=p.translationElapsedMs+if(timingStage==VideoStage.TRANSLATING)delta else 0,
                     exportElapsedMs=p.exportElapsedMs+if(timingStage==VideoStage.EXPORTING)delta else 0), checkpointEncoding)
@@ -344,7 +358,7 @@ class VideoJobs internal constructor(
                     smartMetrics.add("checkpoint_wall_ms", (System.nanoTime() - checkpointAt) / 1_000_000L)
                     val nextProfileStage = if (p.stage == VideoStage.WAITING_LIVE) VideoProfileStage.LIVE_WAIT
                         else VideoProfileStage.forWorker(pipelineStage, intended)
-                    profiler?.checkpoint(nextProfileStage, info.totalPss.toLong())
+                    profiler?.checkpoint(nextProfileStage, pss)
                 }
                 timingStage=intended;lastTick=now
                 val refreshAt = System.nanoTime()
@@ -700,7 +714,7 @@ class VideoJobs internal constructor(
                             val updated=p.cues.toMutableList();updated[index]=row.copy(translation=translated,localDraft=translated,
                                 refinementState=if(hybrid)"pending" else "",approved=false,model=VideoOfflineTranslator.MODEL,error="")
                             persist(p.copy(cues=updated,model=VideoOfflineTranslator.MODEL,
-                                progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size))
+                                progress=unstagedTranslationPercent(updated, hybrid)))
                         }
                         var pendingRepair:VideoTranslationPlan.Batch?=null
                         val textClient=VideoTranslationClient(context)
@@ -743,7 +757,7 @@ class VideoJobs internal constructor(
                             if(reviewed!=null){
                                 val selected=VideoTranslationPlan.selectBatch(batch,reviewed.positions)
                                 val updated=VideoTranslationPlan.applyCloudResult(p.cues,selected,reviewed.translations,reviewed.scope.modelVersion,hybrid,p.glossary)
-                                persist(p.copy(cues=updated,model=reviewed.scope.modelVersion,progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size,
+                                persist(p.copy(cues=updated,model=reviewed.scope.modelVersion,progress=unstagedTranslationPercent(updated, hybrid),
                                     message="Đã dùng câu đã duyệt khớp nguyên văn trong phạm vi phim đã chọn. Các câu mới vẫn được xử lý."))
                                 continue
                             }
@@ -753,7 +767,7 @@ class VideoJobs internal constructor(
                             if(cached!=null){
                                 runCatching{smartMetrics.add("cache_${cached.level.name.lowercase()}_hits");smartMetrics.flush()}
                                 val updated=VideoTranslationPlan.applyCloudResult(p.cues,batch,cached.translations,cached.model,hybrid,p.glossary)
-                                persist(p.copy(cues=updated,model=cached.model,progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size,
+                                persist(p.copy(cues=updated,model=cached.model,progress=unstagedTranslationPercent(updated, hybrid),
                                     message="Đã dùng bản dịch khớp nguyên văn và ngữ cảnh trong dự án hàng loạt."))
                                 continue
                             }
@@ -799,7 +813,7 @@ class VideoJobs internal constructor(
                                             (BatchPipelineStage.TRANSLATE to task.copy(targetCueLimit = hybridTargetLimit)))
                                     } else p.pipeline
                                     persist(p.copy(cues=updated,model=outcome.model,pipeline=recoveredPipeline,
-                                        progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size))
+                                        progress=unstagedTranslationPercent(updated, hybrid)))
                                     if(!repairing)runCatching{batchCache.save(p,batch,accepted,outcome.model)}
                                     if(!repairing)adaptiveGroup?.complete(batch.cueIds.size)
                                     economy?.acknowledge()
@@ -815,7 +829,7 @@ class VideoJobs internal constructor(
                                     if (recoverHybrid) {
                                         hybridTargetLimit = requireNotNull(hybridRecovery).partialReply(batch.cueIds.size)
                                         val task = p.pipeline.task(BatchPipelineStage.TRANSLATE)
-                                        persist(p.copy(cues = updated, progress = updated.count { VideoTranslationPlan.isComplete(it, true) } * 100 / updated.size,
+                                        persist(p.copy(cues = updated, progress = unstagedTranslationPercent(updated, true),
                                             pipeline = p.pipeline.copy(stages = p.pipeline.stages +
                                                 (BatchPipelineStage.TRANSLATE to task.copy(targetCueLimit = hybridTargetLimit))),
                                             message = "Đã lưu câu hợp lệ. Đang chia phần còn thiếu thành nhóm tối đa $hybridTargetLimit câu để tiếp tục."))
@@ -824,7 +838,7 @@ class VideoJobs internal constructor(
                                             detail = "Gemini chưa trả câu hợp lệ sau ba nhóm liên tiếp. Tiến độ đã lưu; kiểm tra phần còn thiếu rồi bấm Tiếp tục.")
                                         continue
                                     }
-                                    persist(p.copy(cues=updated,progress=updated.count{VideoTranslationPlan.isComplete(it,hybrid)}*100/updated.size,
+                                    persist(p.copy(cues=updated,progress=unstagedTranslationPercent(updated, hybrid),
                                         message=if(hybrid)"Đã lưu các câu hợp lệ; còn câu cần tiếp tục hoặc kiểm tra."
                                             else "Đã lưu câu hợp lệ. Gemini sẽ thử riêng ID còn thiếu hoặc ký tự lạ tối đa một lượt."))
                                     economy?.acknowledge()

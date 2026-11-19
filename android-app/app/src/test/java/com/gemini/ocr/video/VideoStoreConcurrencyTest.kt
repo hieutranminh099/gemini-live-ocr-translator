@@ -7,6 +7,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -53,5 +54,39 @@ class VideoStoreConcurrencyTest {
 
         assertEquals(next.json().toString(), loaded.json().toString())
         assertEquals(listOf("A", "B"), loaded.cues.first().qualityFlags)
+    }
+
+    @Test fun checkpointPreservesAllRowsBeyondCacheBudgetAndAfterAChangeAcrossBlocks() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = VideoStore(context)
+        val encoding = VideoCheckpointEncoding()
+        val flags = mutableListOf("FIRST")
+        val source = "中文字幕。".repeat(29)
+        val translation = "Câu phụ đề thử nghiệm. ".repeat(7)
+        val cues = List(5_000) { index ->
+            VideoCue("cue-$index", index * 400L, index * 400L + 300, source, translation,
+                draftVi = translation, qualityFlags = if (index == 255) flags else emptyList())
+        }
+        val id = UUID.randomUUID().toString()
+        val project = VideoProject(id, "Long file", "file:///fixture.mp4", 2_000_000, 640, 360, cues = cues)
+        try {
+            store.save(project, encoding)
+            assertTrue(File(store.folder(id), "project.json").length() > 4L * 1024 * 1024)
+
+            flags += "UPDATED"
+            val changed = cues.toMutableList()
+            changed[256] = changed[256].copy(translation = "Đổi câu đầu khối", ocrAlternatives = listOf("字幕"))
+            changed[4_900] = changed[4_900].copy(translation = "Đổi câu cuối video")
+            val updated = store.save(project.copy(title = "Changed", cues = changed), encoding)
+            val loaded = VideoStore(context).load(id)
+            assertEquals(updated.cues, loaded.cues)
+            assertEquals(listOf("FIRST", "UPDATED"), loaded.cues[255].qualityFlags)
+
+            val shortened = changed.take(514).toMutableList().apply { removeAt(255) }
+            val compacted = store.save(updated.copy(cues = shortened), encoding)
+            assertEquals(compacted.json().toString(), VideoStore(context).load(id).json().toString())
+        } finally {
+            store.folder(id).deleteRecursively()
+        }
     }
 }

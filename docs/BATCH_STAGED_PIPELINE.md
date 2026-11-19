@@ -34,7 +34,7 @@ EXTRACT staged dùng `processVideoDraft()` để giữ chữ Han thực tế có
 
 `VideoStageCheckpoint` lưu `status`, `lastCheckpoint`, `attempts`, `errorCode`, `nextRetryAt`; trạng thái gồm `PENDING`, `RUNNING`, `RETRY_WAIT`, `COMPLETE`, `PAUSED`, `NEEDS_REVIEW`. Mốc trích xuất là `scanMs`; mốc dịch/hiệu đính là số câu đã có kết quả. Timeline và checkpoint nằm trong **cùng một AtomicFile** của dự án, nên không thể đánh dấu hoàn tất trước dữ liệu. Batch giữ `currentStage`, thứ tự tập và trạng thái từng item trong AtomicFile riêng; khi tiếp tục, worker đối chiếu lại dự án con thay vì tin trạng thái batch cũ.
 
-Mỗi worker có thể giữ tối đa 4 MiB dữ liệu JSON đã mã hóa của các câu ở checkpoint trước. Câu giữ nguyên được ghi lại từ dữ liệu đó. Từng lần lưu vẫn ghi đầy đủ timeline cùng trạng thái, dùng cùng schema và cùng thao tác ghi nguyên tử.
+Mỗi worker có thể giữ tối đa 4 MiB dữ liệu JSON của các khối câu từ checkpoint trước. Khối giữ nguyên được ghi liền một lần. Trong khối đã sửa, chỉ những câu thay đổi cần mã hóa lại nếu còn bản lưu. Từng lần lưu vẫn ghi đầy đủ timeline cùng trạng thái, dùng cùng schema và cùng thao tác ghi nguyên tử.
 
 `VideoPreview` báo quyền ưu tiên playback qua listener của player hiện có, kể cả lúc buffering. Pipeline không nhận trích xuất nặng mới khi đang xem; extractor/export đang chạy nhường tại gate có thể hủy. Request text đang hoàn thành vẫn được lưu. Admission API giảm về một request; sau khi player dừng, giữ hai giây trước khi phục hồi để tránh dao động do seek/pause. Live tiếp tục có gate ưu tiên riêng.
 
@@ -79,6 +79,8 @@ Sau lỗi tạm thời, hàng đợi tự tiếp tục sau một phút, tối đ
 ### Bộ giải mã video cục bộ từ 1.8.1
 
 `VideoCodecBoundary` chỉ bọc thao tác native codec/extractor, trả mã `FRAME_CODEC_STATE`/`FRAME_CODEC_ERROR`, tên thao tác, mốc đã đọc và diagnostic/code đã lọc. Không sao chép URI, chữ trong phim hoặc raw exception message. Cancellation, lỗi lưu checkpoint, lỗi ROI và lỗi OCR không được nhận nhầm thành lỗi codec để tự chạy lại.
+
+Mỗi vòng giải mã nạp tối đa tám mẫu nén vào các bộ đệm đầu vào sẵn có rồi lấy khung hình đầu ra. Vòng lặp kiểm tra Live và hủy tác vụ giữa các nhóm. ROI và OCR tiếp tục đi theo thứ tự và timestamp đầu ra của codec.
 
 Watchdog 30 giây chỉ đếm thời gian bộ giải mã không tiến triển; chờ Live và xử lý ROI đã sở hữu không tính vào thời gian này. Khi lỗi đọc có thể phục hồi, staged EXTRACT lưu ngay cue đã đóng và carry của cue đang mở, giải phóng toàn bộ tài nguyên rồi tạo reader mới từ `scanMs` mới nhất. Tối đa hai lần mở lại trong một lượt; chờ 250/500 ms có thể hủy. Khi hết lượt, giữ `NEEDS_REVIEW` và phần đã đọc. Checkpoint lỗi luôn nhỏ hơn duration; chỉ EOS đã kiểm chứng mới đánh dấu đọc hết. Cleanup phụ không thay thế lỗi gốc, cancellation hoặc kết quả đã hoàn tất.
 

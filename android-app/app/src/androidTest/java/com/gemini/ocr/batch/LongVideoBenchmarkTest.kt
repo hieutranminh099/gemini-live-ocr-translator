@@ -18,6 +18,7 @@ import com.gemini.ocr.video.VideoPolishClient
 import com.gemini.ocr.video.VideoSourceMode
 import com.gemini.ocr.video.VideoStage
 import com.gemini.ocr.video.VideoStore
+import com.gemini.ocr.video.VideoTimeline
 import com.gemini.ocr.video.VideoTranslationClient
 import com.gemini.ocr.video.VideoTranslationMode
 import kotlinx.coroutines.delay
@@ -43,6 +44,8 @@ class LongVideoBenchmarkTest {
         check(context.checkSelfPermission(android.Manifest.permission.INTERNET) == PackageManager.PERMISSION_DENIED)
         val input = File(context.filesDir, "long-video-ocr-benchmark.mp4")
         check(input.isFile)
+        val originalBytes = input.length()
+        val originalSha = fileHash(input)
         val settings = AppSettings(context)
         val jobs = BatchJobs.get(context)
         val videos = VideoJobs.get(context)
@@ -54,14 +57,19 @@ class LongVideoBenchmarkTest {
         val checkpoint = File(context.filesDir, "long-video-progress.json")
         var translateRequests = 0
         var polishRequests = 0
+        var requestProfile = ""
+        var requestGlossary = ""
+        val requests = JSONArray()
         settings.standaloneApiKey = "offline-fixture"
         StandaloneTranslator.beforeNetworkCallForTest = { error("No provider requests are permitted in this test") }
         VideoTranslationClient.overrideResponseForTest = { request ->
             translateRequests++
+            requests.put(VideoTranslationClient.buildRequest(request, requestProfile, requestGlossary))
             response(request.cueIds, editorial = false)
         }
         VideoPolishClient.overrideResponseForTest = { request ->
             polishRequests++
+            requests.put(VideoPolishClient.buildRequest(request, requestProfile, requestGlossary))
             response(request.cueIds, editorial = true)
         }
         try {
@@ -72,6 +80,9 @@ class LongVideoBenchmarkTest {
                 assertEquals(duration, store.load(item.projectId).durationMs)
                 jobs.configure(batch.id, VideoTranslationMode.GEMINI, VideoSourceMode.OCR)
                 jobs.applySharedRoi(batch.id, listOf(0f, .65f, 1f, .97f))
+                val configured = store.load(item.projectId)
+                requestProfile = configured.profile
+                requestGlossary = configured.glossary
                 val ready = SystemClock.elapsedRealtime()
                 activity.onActivity { jobs.start(batch.id) }
                 withTimeout(12 * 60_000L) {
@@ -113,7 +124,11 @@ class LongVideoBenchmarkTest {
                 val saved = MovieRecord.from(JSONObject(AtomicFile(metadata).openRead().bufferedReader().use { it.readText() }))
                 val episode = saved.episodes.single()
                 assertTrue(library.isAvailable(episode))
-                val cues = requireNotNull(episode.source).cues
+                val snapshot = requireNotNull(episode.source)
+                assertEquals(originalBytes, snapshot.bytes)
+                assertEquals(originalSha, snapshot.sha256)
+                assertEquals(originalSha, fileHash(File(requireNotNull(Uri.parse(episode.mediaUri).path))))
+                val cues = snapshot.cues
                 assertTrue(cues.all { it.approved && it.translation.isNotBlank() })
                 for ((startMs, han) in listOf(200L to "小明今天去公园看花", 1_080_200L to "老师今天去车站等车",
                     2_182_200L to "小雨今天去电影院看电影")) {
@@ -126,13 +141,16 @@ class LongVideoBenchmarkTest {
                 assertEquals(duration, project.scanMs)
                 assertEquals(translateRequests + polishRequests, project.cloudCalls)
                 val timeline = cues.joinToString("\n") { "${it.startMs}|${it.endMs}|${it.source}" }
-                val digest = MessageDigest.getInstance("SHA-256").digest(timeline.toByteArray())
-                    .joinToString("") { "%02x".format(it) }
                 report.put("duration_ms", duration).put("import_ms", ready - start)
                     .put("scan_to_pause_ms", resumeAt - ready).put("resume_to_review_ms", reviewAt - resumeAt)
                     .put("save_ms", savedAt - reviewAt).put("wall_ms", savedAt - start)
                     .put("pause_ms", paused.scanMs).put("restored_cues", paused.cues.size)
-                    .put("saved_cues", cues.size).put("timeline_sha256", digest)
+                    .put("saved_cues", cues.size).put("timeline_sha256", hash(timeline))
+                    .put("reviewed_cues_sha256", hash(JSONArray(cues.map { it.json() }).toString()))
+                    .put("request_sha256", hash(requests.toString()))
+                    .put("srt_sha256", hash(VideoTimeline.srt(cues, duration)))
+                    .put("ass_sha256", hash(VideoTimeline.ass(snapshot.project(episode))))
+                    .put("source_video_sha256", originalSha)
                     .put("fixture_responses", translateRequests + polishRequests).put("ocr", project.ocrMetrics)
                 output.writeText(report.toString())
             }
@@ -143,6 +161,22 @@ class LongVideoBenchmarkTest {
             StandaloneTranslator.beforeNetworkCallForTest = null
             settings.standaloneApiKey = ""
         }
+    }
+
+    private fun hash(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    private fun fileHash(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { stream ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun response(ids: List<String>, editorial: Boolean): String {

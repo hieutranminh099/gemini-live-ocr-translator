@@ -77,6 +77,7 @@ class VideoBatchDiagnosticsTest {
         assertEquals(1L, legacy.failedRequests)
         val resumed = VideoBatchTelemetry(context, oldId)
         resumed.response(VideoTranslationClient.Result(mapOf("id" to "Việt"), emptyList(), "fixture", 10))
+        resumed.flush()
         val newId = newId()
         file(newId).writeText(JSONObject().put("requests", 2).put("responses", 2)
             .put("last_request_cues", 6).put("last_request_at_ms", Long.MAX_VALUE)
@@ -95,6 +96,30 @@ class VideoBatchDiagnosticsTest {
         assertEquals(1L, aggregate.requestCapacity)
         assertFalse(file(oldId).readText().contains("private"))
         assertFalse(aggregate.toString().contains("private"))
+    }
+
+    @Test fun ordinaryResponsesShareDispatchOrExitWriteWhileRetryDeadlinePersistsImmediately() {
+        val id = newId()
+        val metrics = VideoBatchTelemetry(context, id)
+        val response = VideoTranslationClient.Result(mapOf("one" to "Xin chào"), emptyList(), "fixture", 10)
+        metrics.dispatch(1, false)
+        metrics.response(response)
+        assertEquals(1L, VideoBatchDiagnostics.read(context, listOf(id)).requests)
+        assertEquals(0L, VideoBatchDiagnostics.read(context, listOf(id)).responses)
+
+        metrics.dispatch(1, false)
+        assertEquals(1L, VideoBatchDiagnostics.read(context, listOf(id)).responses)
+        val deadline = 1_900_000_000_000L
+        metrics.retry("API_SERVICE_503", 1, deadline)
+        assertEquals(deadline, VideoBatchDiagnostics.read(context, listOf(id)).retryAtMs)
+
+        metrics.dispatch(1, false)
+        metrics.response(response)
+        metrics.flush()
+        val final = VideoBatchDiagnostics.read(context, listOf(id))
+        assertEquals(0L, final.retryAtMs)
+        assertEquals(3L, final.requests)
+        assertEquals(2L, final.responses)
     }
 
     @Test fun malformedOversizedAndInvalidPathsAreIgnoredAndAtomicBackupCanBeRecovered() {

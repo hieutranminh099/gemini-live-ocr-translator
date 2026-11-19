@@ -4,12 +4,13 @@ import android.content.Context
 import android.net.Uri
 import android.util.AtomicFile
 import org.json.JSONObject
-import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.RandomAccess
 import java.util.UUID
 
 /** All source handles belong to an explicit document selection; source media is never overwritten. */
@@ -127,43 +128,90 @@ class VideoStore(context: Context) {
 
 /** Owned by one worker. Every checkpoint remains a complete, independently readable project. */
 internal class VideoCheckpointEncoding {
-    private var previous: List<Row> = emptyList()
+    private var previous: List<Block?> = emptyList()
 
     fun encode(project: VideoProject): Encoded {
         val metadata = project.json(includeCues = false).toString()
         val prefix = (metadata.dropLast(1) + ",\"cues\":[").toByteArray(Charsets.UTF_8)
-        val rows = project.cues.mapIndexed { index, cue ->
-            previous.getOrNull(index)?.takeIf { it.matches(cue) } ?: Row(cue)
+        val cues = if (project.cues is RandomAccess) project.cues else project.cues.toList()
+        val blockCount = (cues.size + ROWS_PER_BLOCK - 1) / ROWS_PER_BLOCK
+        val cache = ArrayList<Block?>(blockCount)
+        val payload = ArrayList<ByteArray>(blockCount)
+        var retainedBytes = 0L
+        var payloadBytes = 0L
+        for (start in cues.indices step ROWS_PER_BLOCK) {
+            val rows = cues.subList(start, minOf(start + ROWS_PER_BLOCK, cues.size))
+            val old = previous.getOrNull(start / ROWS_PER_BLOCK)
+            val block = old?.takeIf { it.matches(rows) } ?: encodeBlock(rows, old, leadingComma = start > 0)
+            payload += block.bytes
+            payloadBytes += block.bytes.size
+            if (retainedBytes + block.bytes.size <= MAX_CACHED_BYTES) {
+                cache += block
+                retainedBytes += block.bytes.size
+            } else {
+                cache += null
+            }
         }
-        val cueBytes = rows.sumOf { it.bytes.size.toLong() }
-        previous = if (cueBytes <= 4L * 1024 * 1024) rows else emptyList()
-        return Encoded(prefix, rows.map { it.bytes }, cueBytes)
+        previous = cache
+        return Encoded(prefix, payload, payloadBytes)
+    }
+
+    private fun encodeBlock(cues: List<VideoCue>, old: Block?, leadingComma: Boolean): Block {
+        val buffer = ByteArrayOutputStream(old?.bytes?.size ?: (cues.size * 256))
+        val rows = ArrayList<Row>(cues.size)
+        val starts = IntArray(cues.size)
+        cues.forEachIndexed { index, cue ->
+            if (index > 0 || leadingComma) buffer.write(','.code)
+            starts[index] = buffer.size()
+            val cached = old?.rows?.getOrNull(index)
+            if (old != null && cached != null && cached.matches(cue)) {
+                rows += cached
+                old.writeRow(index, buffer)
+            } else {
+                rows += Row(cue)
+                buffer.write(cue.json().toString().toByteArray(Charsets.UTF_8))
+            }
+        }
+        return Block(rows, starts, buffer.toByteArray())
     }
 
     private class Row(private val cue: VideoCue) {
         // The cue holds read-only interfaces, which callers may back with mutable lists.
         private val flags = cue.qualityFlags.toList()
         private val alternatives = cue.ocrAlternatives.toList()
-        val bytes = cue.json().toString().toByteArray(Charsets.UTF_8)
 
         fun matches(other: VideoCue): Boolean =
-            cue == other && flags == other.qualityFlags && alternatives == other.ocrAlternatives
+            (cue === other || cue == other) && flags == other.qualityFlags && alternatives == other.ocrAlternatives
     }
 
-    internal class Encoded(private val prefix: ByteArray, private val rows: List<ByteArray>, cueBytes: Long) {
-        val size = prefix.size + cueBytes + (rows.size - 1).coerceAtLeast(0) + 2
+    private class Block(val rows: List<Row>, private val starts: IntArray, val bytes: ByteArray) {
+        fun matches(cues: List<VideoCue>): Boolean {
+            if (rows.size != cues.size) return false
+            for (index in cues.indices) if (!rows[index].matches(cues[index])) return false
+            return true
+        }
+
+        fun writeRow(index: Int, output: OutputStream) {
+            // The next row starts one byte after the separator. The last row reaches the end.
+            val end = starts.getOrNull(index + 1)?.minus(1) ?: bytes.size
+            output.write(bytes, starts[index], end - starts[index])
+        }
+    }
+
+    internal class Encoded(private val prefix: ByteArray, private val blocks: List<ByteArray>, cueBytes: Long) {
+        val size = prefix.size + cueBytes + SUFFIX.size
 
         fun writeTo(output: OutputStream) {
-            val buffered = BufferedOutputStream(output, 64 * 1024)
-            buffered.write(prefix)
-            rows.forEachIndexed { index, row ->
-                if (index > 0) buffered.write(','.code)
-                buffered.write(row)
-            }
-            buffered.write(']'.code)
-            buffered.write('}'.code)
-            buffered.flush()
+            output.write(prefix)
+            blocks.forEach(output::write)
+            output.write(SUFFIX)
         }
+    }
+
+    private companion object {
+        const val ROWS_PER_BLOCK = 256
+        const val MAX_CACHED_BYTES = 4L * 1024 * 1024
+        val SUFFIX = "]}".toByteArray(Charsets.UTF_8)
     }
 }
 
