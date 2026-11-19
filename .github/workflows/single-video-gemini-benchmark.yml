@@ -158,4 +158,5 @@ jobs:
           path: |
             ${{ runner.temp }}/results/*.json
             ${{ runner.temp }}/results/*.png
+            ${{ runner.temp }}/results/*.xml
           retention-days: 7

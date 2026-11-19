@@ -5,23 +5,28 @@ baseline=$1
 candidate=$2
 results=$3
 package=com.gemini.ocr.playbacktest
-external="/sdcard/Android/data/$package/files/playback-bench"
+reports="files/playback-bench"
 fixture="$candidate/scripts/fixtures/movie-playback-benchmark.mp4"
 mkdir -p "$results"
 
 run_test() {
   local variant=$1 method=$2
   local log="$results/$variant-$method.instrumentation"
-  if ! timeout 5m adb shell am instrument -w -r -e variant "$variant" \
+  if ! timeout 5m adb shell am instrument -w -r -e variant "$variant" -e benchmarkInternalFiles true \
     -e class "com.gemini.ocr.movie.MoviePlaybackBenchmarkTest#$method" \
     "$package.test/androidx.test.runner.AndroidJUnitRunner" > "$log" || ! grep -Fq 'OK (1 test)' "$log"; then
     tail -70 "$log"
+    for file in "$variant.json" rename.json navigation-failure.png navigation-failure.xml; do
+      if adb shell run-as "$package" test -s "$reports/$file"; then
+        collect "$file" "$variant-failure-$file"
+      fi
+    done
     return 1
   fi
 }
 
 collect() {
-  adb exec-out run-as "$package" cat "$external/$1" > "$results/$2"
+  adb exec-out run-as "$package" cat "$reports/$1" > "$results/$2"
   test -s "$results/$2"
 }
 

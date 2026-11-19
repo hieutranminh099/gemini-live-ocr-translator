@@ -2,6 +2,7 @@
 package com.gemini.ocr.movie
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -23,6 +24,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gemini.ocr.MainActivity
 import com.gemini.ocr.BuildConfig
@@ -45,6 +47,11 @@ import java.util.concurrent.atomic.AtomicReference
 class MoviePlaybackBenchmarkTest {
     private val ins get()=InstrumentationRegistry.getInstrumentation()
     private fun main(block:()->Unit)=ins.runOnMainSync(block)
+    private fun reports(context: Context): File {
+        val internal = InstrumentationRegistry.getArguments().getString("benchmarkInternalFiles") == "true"
+        val root = if (internal) context.filesDir else requireNotNull(context.getExternalFilesDir(null))
+        return File(root, "playback-bench").apply { mkdirs() }
+    }
     private fun waitFor(label:String, timeout:Long=15_000, predicate:()->Boolean) {
         val until=SystemClock.elapsedRealtime()+timeout
         while(!predicate()) { check(SystemClock.elapsedRealtime()<until){"Timeout: $label"}; Thread.sleep(10) }
@@ -55,7 +62,7 @@ class MoviePlaybackBenchmarkTest {
     @Test fun renameAndLatestEpisode():Unit=runBlocking {
         val context=ins.targetContext
         require(context.packageName=="com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
-        val folder=File(context.getExternalFilesDir(null),"playback-bench")
+        val folder=reports(context)
         val report=JSONObject().put("completed",false)
         val library=MovieLibrary.get(context)
         waitFor("movie catalog"){library.movies.value.any { it.episodes.size == 3 }}
@@ -70,10 +77,28 @@ class MoviePlaybackBenchmarkTest {
             screen=ActivityScenario.launch(Intent(context,MainActivity::class.java).putExtra("ux_tab",2))
             val search=checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")),8000))
             search.text="Rename Fixture"
-            repeat(4){ if(!device.hasObject(By.desc("Tùy chọn phim")))device.swipe(device.displayWidth/2,device.displayHeight*3/4,device.displayWidth/2,device.displayHeight/3,20) }
+            fun visibleOptions(): UiObject2 {
+                val height = device.displayHeight
+                val x = device.displayWidth / 2
+                repeat(10) {
+                    val node = device.findObject(By.desc("Tùy chọn phim"))
+                    val bounds = node?.visibleBounds
+                    if (node != null && bounds != null && bounds.height() >= 32 &&
+                        bounds.centerY() in height / 8..height * 4 / 5) return node
+                    if (bounds != null && bounds.centerY() < height / 8) {
+                        device.swipe(x, height / 3, x, height / 2, 22)
+                    } else {
+                        device.swipe(x, height * 3 / 4, x, height / 2, 22)
+                    }
+                    device.waitForIdle(300)
+                }
+                error("Movie option button did not scroll into view")
+            }
             fun openRename() {
-                checkNotNull(device.wait(Until.findObject(By.desc("Tùy chọn phim")),5000)).click()
-                checkNotNull(device.wait(Until.findObject(By.text("Đổi tên phim")),3000)).click()
+                visibleOptions().click()
+                checkNotNull(device.wait(Until.findObject(By.text("Đổi tên phim")),5000)) {
+                    "Movie menu did not expose the rename action"
+                }.click()
             }
             openRename()
             val field=device.findObjects(By.clazz("android.widget.EditText")).last()
@@ -143,7 +168,12 @@ class MoviePlaybackBenchmarkTest {
             device.takeScreenshot(File(folder,"renamed-player.png"))
             File(folder,"persisted-fixture.json").writeText(JSONObject().put("movie",before.id).put("episode",before.episodes[0].id).toString())
             report.put("completed",true)
-        }catch(t:Throwable){report.put("error",t.stackTraceToString());throw t}
+        }catch(t:Throwable){
+            report.put("error",t.stackTraceToString())
+            runCatching { device.takeScreenshot(File(folder,"navigation-failure.png")) }
+            runCatching { device.dumpWindowHierarchy(File(folder,"navigation-failure.xml")) }
+            throw t
+        }
         finally{
             playerScreen?.close();screen?.close();VideoPreviewDiagnostics.onPlayerForTest=null
             File(folder,"rename.json").writeText(report.toString(2))
@@ -153,7 +183,7 @@ class MoviePlaybackBenchmarkTest {
     @Test fun coldLibraryCatalog(): Unit = runBlocking {
         val context = ins.targetContext
         require(context.packageName == "com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
-        val folder = File(context.getExternalFilesDir(null), "playback-bench")
+        val folder = reports(context)
         val fixture = File(context.filesDir, "playback-fixture.mp4")
         require(fixture.isFile)
         val uri = Uri.fromFile(fixture)
@@ -189,7 +219,7 @@ class MoviePlaybackBenchmarkTest {
         val context=ins.targetContext
         require(context.packageName=="com.gemini.ocr.playbacktest" && BuildConfig.VERIFICATION_OFFLINE_NETWORK)
         assertEquals(PackageManager.PERMISSION_DENIED,context.checkSelfPermission(Manifest.permission.INTERNET))
-        val folder=File(context.getExternalFilesDir(null),"playback-bench").apply{mkdirs()}
+        val folder=reports(context)
         val variant=InstrumentationRegistry.getArguments().getString("variant") ?: "baseline"
         val output=File(folder,"$variant.json")
         val report=JSONObject().put("completed",false).put("variant",variant)
@@ -197,7 +227,8 @@ class MoviePlaybackBenchmarkTest {
         val trace=CopyOnWriteArrayList<JSONObject>()
         MoviePlaybackTrace.observer={stage,ns->trace.add(JSONObject().put("stage",stage).put("ns",ns))}
         val library=MovieLibrary.get(context)
-        val fixture = File(context.filesDir, "playback-input.mp4").takeIf { it.isFile } ?: File(folder, "playback.mp4")
+        val fixture = File(context.filesDir, "playback-input.mp4").takeIf { it.isFile }
+            ?: File(requireNotNull(context.getExternalFilesDir(null)), "playback-bench/playback.mp4")
         require(fixture.isFile)
         val owned=File(context.filesDir,"playback-fixture.mp4")
         fixture.copyTo(owned,true)
