@@ -81,10 +81,11 @@ class MoviePlaybackBenchmarkTest {
                 val height = device.displayHeight
                 val x = device.displayWidth / 2
                 repeat(10) {
-                    val node = device.findObject(By.desc("Tùy chọn phim"))
-                    val bounds = node?.visibleBounds
-                    if (node != null && bounds != null && bounds.height() >= 32 &&
-                        bounds.centerY() in height / 8..height * 4 / 5) return node
+                    val icon = device.findObject(By.desc("Tùy chọn phim"))
+                    val button = icon?.takeIf { it.isClickable } ?: icon?.parent?.takeIf { it.isClickable }
+                    val bounds = button?.visibleBounds
+                    if (button != null && bounds != null && bounds.height() >= bounds.width() / 2 &&
+                        bounds.centerY() in height / 8..height * 4 / 5) return button
                     if (bounds != null && bounds.centerY() < height / 8) {
                         device.swipe(x, height / 3, x, height / 2, 22)
                     } else {

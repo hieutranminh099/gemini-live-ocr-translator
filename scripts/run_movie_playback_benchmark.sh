@@ -31,25 +31,26 @@ collect() {
 }
 
 run_variant() {
-  local checkout=$1 variant=$2
+  local checkout=$1 variant=$2 failed=0
   local apks="$checkout/android-app/app/build/outputs/apk"
-  adb install -r "$apks/debug/app-debug.apk"
-  adb install -r "$apks/androidTest/debug/app-debug-androidTest.apk"
-  adb shell pm clear "$package" >/dev/null
-  adb shell run-as "$package" mkdir -p files
-  adb shell -T run-as "$package" sh -c '"cat > files/playback-input.mp4"' < "$fixture"
-  run_test "$variant" measuredPlayback
-  collect "$variant.json" "$variant-playback.json"
-  run_test "$variant" renameAndLatestEpisode
-  collect rename.json "$variant-navigation.json"
-  collect library.png "$variant-library.png"
-  collect player.png "$variant-player.png"
-  run_test "$variant" coldLibraryCatalog
-  collect cold-library.json "$variant-cold-library.json"
+  adb install -r "$apks/debug/app-debug.apk" || return 1
+  adb install -r "$apks/androidTest/debug/app-debug-androidTest.apk" || return 1
+  adb shell pm clear "$package" >/dev/null || return 1
+  adb shell run-as "$package" mkdir -p files || return 1
+  adb shell -T run-as "$package" sh -c '"cat > files/playback-input.mp4"' < "$fixture" || return 1
+  { run_test "$variant" measuredPlayback && collect "$variant.json" "$variant-playback.json"; } || failed=1
+  { run_test "$variant" renameAndLatestEpisode && collect rename.json "$variant-navigation.json" &&
+    collect library.png "$variant-library.png" && collect player.png "$variant-player.png"; } || failed=1
+  { run_test "$variant" coldLibraryCatalog && collect cold-library.json "$variant-cold-library.json"; } || failed=1
+  return "$failed"
 }
 
-run_variant "$baseline" baseline
-run_variant "$candidate" candidate
+failed=0
+run_variant "$baseline" baseline || failed=1
+run_variant "$candidate" candidate || failed=1
+if (( failed )); then
+  exit "$failed"
+fi
 
 python3 - "$results" <<'PY'
 import json
