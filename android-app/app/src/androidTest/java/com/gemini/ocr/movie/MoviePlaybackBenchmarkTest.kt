@@ -146,6 +146,22 @@ class MoviePlaybackBenchmarkTest {
                 }
                 checkNotNull(device.findObject(By.desc(label)) ?: device.findObject(By.text(label))).click()
             }
+            fun swipeToNextEpisode(fullscreen: Boolean, expectedId: String) {
+                if (fullscreen) waitFor("landscape viewport") { device.displayWidth > device.displayHeight }
+                val bounds = android.graphics.Rect()
+                playerScreen.onActivity { activity ->
+                    val view = views(activity.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
+                    view.hideController()
+                    val location = IntArray(2)
+                    view.getLocationOnScreen(location)
+                    bounds.set(location[0], location[1], location[0] + view.width, location[1] + view.height)
+                }
+                val x = bounds.left + bounds.width() / 3
+                assertTrue(device.swipe(x, bounds.top + bounds.height() / 3, x, bounds.top + bounds.height() * 3 / 4, 36))
+                waitFor("downward swipe advanced to $expectedId") {
+                    active.get()?.let { it.first == expectedId && it.second in ready } == true
+                }
+            }
             pressEpisode("Tập tiếp")
             waitFor("visible next control advanced the episode") {
                 active.get()?.let { it.first == before.episodes[1].id && it.second in ready } == true
@@ -156,6 +172,12 @@ class MoviePlaybackBenchmarkTest {
             }
             main { active.get()!!.second.pause() }
             report.put("visible_episode_controls", true)
+            swipeToNextEpisode(fullscreen = false, expectedId = before.episodes[1].id)
+            pressEpisode("Tập trước")
+            waitFor("return to the first episode") {
+                active.get()?.let { it.first == before.episodes[0].id && it.second in ready } == true
+            }
+            report.put("downward_swipe", true)
             // Three navigation choices before source I/O has time to finish: final choice must win.
             playerScreen.onActivity { a ->
                 val view=views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single()
@@ -168,6 +190,9 @@ class MoviePlaybackBenchmarkTest {
             playerScreen.onActivity { a->views(a.window.decorView).filterIsInstance<FullscreenPlayerView>().single().onDoubleTap() }
             assertTrue(device.wait(Until.hasObject(By.desc("Thoát toàn màn hình")),3000) ||
                 (!device.hasObject(By.text("Về Kho phim")) && !device.hasObject(By.desc("Về Kho phim"))))
+            swipeToNextEpisode(fullscreen = true, expectedId = before.episodes[2].id)
+            assertFalse(device.hasObject(By.desc("Về Kho phim")) || device.hasObject(By.text("Về Kho phim")))
+            report.put("fullscreen_downward_swipe", true)
             device.pressBack()
             report.put("fullscreen_back",true)
             device.takeScreenshot(File(folder,"renamed-player.png"))

@@ -258,6 +258,7 @@ class MoviePlaybackActivity : ComponentActivity() {
                             }
                             if (showPlaybackSettings) MoviePlaybackSettingsDialog(
                                 playbackSettings, modes, selection.project.style.displayStyle(),
+                                hasMultipleEpisodes = episodes.size > 1,
                                 onChange = { playbackSettings = it }, onDismiss = {
                                     playbackSettings.save(this@MoviePlaybackActivity)
                                     showPlaybackSettings = false

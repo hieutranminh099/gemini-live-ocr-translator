@@ -138,3 +138,5 @@ Workflow `Single-video Android benchmark` chạy khi nhánh `perf/single-video` 
 ## Kiểm tra trải nghiệm Kho phim và trình phát
 
 Nhánh `perf/movie-experience` lấy `052d22d` làm đối chứng và chạy `MoviePlaybackBenchmarkTest` trên cùng máy ảo Android. Hai APK kiểm thử dùng riêng package `com.gemini.ocr.playbacktest` và tắt quyền mạng. Clip tổng hợp 24 giây có hình động H.264 và âm thanh AAC. Kết quả ghi năm lượt mở phim, tua khi đang phát hoặc tạm dừng, đổi tập và số lần cập nhật phụ đề. Ca riêng kiểm tra mở danh mục có tám phim, mỗi phim 5.065 câu. Artifact giữ kết quả, ảnh Kho phim và ảnh trình phát. Đo thời gian ở môi trường giả lập dùng để đối chiếu giữa hai bản.
+
+Ca điều hướng dùng UiAutomator để vuốt xuống trên thân trình phát khi xem thường và toàn màn hình. Mỗi lần vuốt phải mở đúng tập kế tiếp và hiển thị khung hình đầu tiên của tập đó.

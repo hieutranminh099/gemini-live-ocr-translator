@@ -125,6 +125,7 @@ internal fun movieResumePosition(position: Long, duration: Long): Long =
 @Composable
 internal fun MoviePlaybackSettingsDialog(
     settings: MoviePlaybackSettings, modes: List<MovieSubtitleMode>, original: VideoSubtitleStyle,
+    hasMultipleEpisodes: Boolean,
     onChange: (MoviePlaybackSettings) -> Unit, onDismiss: () -> Unit
 ) {
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Cài đặt phát phim") }, text = {
@@ -139,6 +140,10 @@ internal fun MoviePlaybackSettingsDialog(
             }
             FilterChip(settings.autoNext, { onChange(settings.copy(autoNext = !settings.autoNext)) },
                 label = { Text("Tự phát tập tiếp đã có trên máy") })
+            if (hasMultipleEpisodes) {
+                Text("Vuốt xuống trên video để sang tập tiếp theo. Vuốt lên để về tập trước.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
             if (modes.isNotEmpty()) {
                 val selected = settings.mode.takeIf { it in modes } ?: modes.first()
                 Text("Phụ đề", style = MaterialTheme.typography.titleSmall)

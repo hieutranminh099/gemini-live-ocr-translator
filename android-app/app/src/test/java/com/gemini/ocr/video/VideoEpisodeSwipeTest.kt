@@ -45,7 +45,22 @@ class VideoEpisodeSwipeTest {
         assertEquals(0, doubles)
     }
 
-    @Test fun horizontalSeekSmallDragsAndSystemOrControllerEdgesNeverSwitchEpisode() {
+    @Test fun shortDownwardDragsWorkOnTheLowerVideoAndInAShortViewport() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val view = FullscreenPlayerView(context)
+        val density = context.resources.displayMetrics.density
+        val requests = mutableListOf<Int>()
+        view.onEpisodeSwipe = { requests.add(it) }
+
+        view.layout(0, 0, (400 * density).toInt(), (550 * density).toInt())
+        drag(view, 200f, 475f, 202f, 530f, density)
+        view.layout(0, 0, (400 * density).toInt(), (170 * density).toInt())
+        drag(view, 200f, 60f, 202f, 115f, density)
+
+        assertEquals(listOf(1, 1), requests)
+    }
+
+    @Test fun horizontalSmallEdgeAndLockedDragsNeverSwitchEpisode() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val view = FullscreenPlayerView(context) {}
         val density = context.resources.displayMetrics.density
@@ -55,8 +70,10 @@ class VideoEpisodeSwipeTest {
         drag(view, 100f, 300f, 300f, 330f, density)
         drag(view, 200f, 300f, 200f, 330f, density)
         drag(view, 10f, 300f, 10f, 450f, density)
-        drag(view, 200f, 30f, 200f, 180f, density)
-        drag(view, 200f, 740f, 200f, 580f, density)
+        drag(view, 200f, 10f, 200f, 180f, density)
+        drag(view, 200f, 790f, 200f, 580f, density)
+        view.touchLocked = true
+        drag(view, 200f, 300f, 200f, 450f, density)
         assertEquals(0, requests)
     }
 

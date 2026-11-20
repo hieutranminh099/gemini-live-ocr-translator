@@ -89,14 +89,18 @@ internal class FullscreenPlayerView @JvmOverloads constructor(context: Context, 
         }
     })
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (touchLocked) return true
+        if (touchLocked) {
+            swipeStarted = false
+            return true
+        }
         if (!useController) return super.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x; downY = event.y
-                val density = resources.displayMetrics.density
-                swipeStarted = onEpisodeSwipe != null && event.x in 24 * density..width - 24 * density &&
-                    event.y in 64 * density..height - 96 * density
+                downX = event.x
+                downY = event.y
+                val edgeInset = 24 * resources.displayMetrics.density
+                swipeStarted = onEpisodeSwipe != null && downX in edgeInset..width - edgeInset &&
+                    downY in edgeInset..height - edgeInset
             }
             MotionEvent.ACTION_UP -> {
                 val direction = if (swipeStarted) episodeSwipeDirection(
@@ -108,7 +112,7 @@ internal class FullscreenPlayerView @JvmOverloads constructor(context: Context, 
                     return true
                 }
             }
-            MotionEvent.ACTION_CANCEL -> swipeStarted = false
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> swipeStarted = false
         }
         return gestures.onTouchEvent(event)
     }
@@ -126,4 +130,4 @@ internal fun movieDoubleTapTarget(tap: Float, position: Long, duration: Long): L
 
 /** A downward swipe means the next saved episode; horizontal scrubs never navigate. */
 internal fun episodeSwipeDirection(dx: Float, dy: Float, density: Float): Int =
-    if (abs(dy) >= 72 * density && abs(dy) > abs(dx) * 1.6f) if (dy > 0) 1 else -1 else 0
+    if (abs(dy) >= 48 * density && abs(dy) > abs(dx) * 1.6f) if (dy > 0) 1 else -1 else 0
