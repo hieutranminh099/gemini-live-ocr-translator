@@ -20,6 +20,13 @@ from .storage import normalize
 QUALITY = {'draft': 0, 'verified': 1, 'user_approved': 2}
 
 
+def video_cue_scope(project_id, context, fallback):
+    if not any(context.values()):
+        return fallback
+    digest = hashlib.sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return f'project:{project_id}:dialogue:{digest}'
+
+
 def memory_hash(namespace, text, context_scope='global'):
     return hashlib.sha256(json.dumps([namespace, context_scope, normalize(text)],
                                     ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()

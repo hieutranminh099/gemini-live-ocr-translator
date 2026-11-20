@@ -23,6 +23,11 @@ class OcrLine:
     confidence: float
     top: float
     bottom: float
+    center_x: float | None = None
+
+    @property
+    def height(self):
+        return self.bottom - self.top
 
 
 @dataclass(frozen=True)
@@ -95,8 +100,11 @@ class RapidOcrRecognizer:
             if text and (source_pattern is None or re.search(source_pattern, text)):
                 top = min(float(point[1]) for point in box)
                 bottom = max(float(point[1]) for point in box)
-                line = OcrLine(text, float(confidence), top / frame.height, bottom / frame.height)
-                lines.append((round(top / 15), min(float(point[0]) for point in box), line))
+                left = min(float(point[0]) for point in box)
+                right = max(float(point[0]) for point in box)
+                line = OcrLine(text, float(confidence), top / frame.height, bottom / frame.height,
+                               (left + right) / (2 * frame.width))
+                lines.append((round(top / 15), left, line))
         lines.sort(key=lambda item: item[:2])
         return _observation(tuple(item[2] for item in lines))
 
@@ -110,18 +118,39 @@ def _observation(lines):
 
 def _outside_subtitle_band(candidate, anchors):
     return all(max(anchor.top - candidate.bottom, candidate.top - anchor.bottom)
-               > max(anchor.bottom - anchor.top, candidate.bottom - candidate.top) for anchor in anchors)
+               > max(anchor.height, candidate.height) for anchor in anchors)
 
 
 class OcrNoiseFilter:
-    """Suppress isolated spatial outliers only when the same subtitle returns."""
+    """Keep bounded spatial evidence and confirm ambiguous changes across samples."""
 
     def __init__(self, max_gap_ms):
         self.max_gap_ms = max_gap_ms
         self.previous = None
         self.pending = None
+        self.recent_noise = []
+
+    def _filter_small_rows(self, timestamp, observation):
+        if not observation.lines:
+            return observation
+        self.recent_noise = [(time, line) for time, line in self.recent_noise
+                             if timestamp - time <= self.max_gap_ms]
+        anchors = [line for line in observation.lines
+                   if line.center_x is not None and .25 <= line.center_x <= .75]
+        anchor = max(anchors, key=lambda line: line.height, default=None)
+        retained = []
+        for line in observation.lines:
+            if anchor and line.height < .70 * anchor.height and _outside_subtitle_band(line, (anchor,)):
+                self.recent_noise.append((timestamp, line))
+            elif not any(_identity(line.text) == _identity(noise.text)
+                         and abs(line.top - noise.top) <= noise.height
+                         and line.height <= 1.15 * noise.height for _, noise in self.recent_noise):
+                retained.append(line)
+        self.recent_noise = self.recent_noise[-8:]
+        return _observation(tuple(retained))
 
     def add(self, timestamp, observation):
+        observation = self._filter_small_rows(timestamp, observation)
         if self.pending is not None:
             time, candidate = self.pending
             old_time, old = self.previous

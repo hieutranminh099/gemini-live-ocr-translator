@@ -25,7 +25,7 @@ import unicodedata
 from .models import TranslateRequest
 from .provider import TranslationError
 from .storage import normalize
-from .translation_memory import MemoryEntry
+from .translation_memory import MemoryEntry, video_cue_scope
 from .video_media import (VideoMediaError, VideoSegment, SubtitleStyle, discover_tools,
     probe_video, extract_subtitle_stream, export_srt, export_ass, render_video, preview_frame, validate_roi,VideoMetadata)
 
@@ -99,13 +99,31 @@ def _context_for_provider(text, neighbors, characters):
     return context
 
 
-def _translation_review_flags(source, translation):
-    # A missing explicit numeral merits review even if it was spelled out
-    # correctly. Keep the draft and avoid a second provider call.
+_SOURCE_NEGATION = {
+    'zh': re.compile(r'不是|没有|从未|绝不|没付'),
+    'ja': re.compile(r'ません|なかった|じゃない|ではない|なくて'),
+    'ko': re.compile(r'않|아니|없|못'),
+}
+_VIETNAMESE_NEGATION = re.compile(r'\b(?:không|chẳng|chả|chưa|đừng|chớ|cấm|đâu|mất|vắng)\b')
+
+
+def _translation_review_flags(source, translation, language='', characters=()):
+    # Lexical checks are advisory. Numbers can be spelled out and a negative
+    # construction can be translated with a different choice of words.
     def numerals(text):
         return set(re.findall(r'[0-9]+', unicodedata.normalize('NFKC', text)))
 
-    return ['check_numbers'] if numerals(source) - numerals(translation) else []
+    flags = []
+    if numerals(source) - numerals(translation):
+        flags.append('check_numbers')
+    target = unicodedata.normalize('NFKC', translation).casefold()
+    negation = _SOURCE_NEGATION.get(language)
+    if negation and negation.search(source) and not _VIETNAMESE_NEGATION.search(target):
+        flags.append('check_negation')
+    if any(character.confirmed and character.vietnamese_name and character.source_name in source
+           and character.vietnamese_name.casefold() not in target for character in characters):
+        flags.append('check_character_name')
+    return flags
 
 
 def _atomic_json(path, value):
@@ -537,7 +555,7 @@ class VideoJobService:
                     for row in items:
                         row['translation'] = block['text']
                         row['quality'] = 'draft'
-                        row['review_flags'] = _translation_review_flags(row['text'], block['text'])
+                        row['review_flags'] = _translation_review_flags(row['text'], block['text'], opts.source, opts.characters)
                     job['progress']['cache_hits']+=int(block['cached'])
                 job['progress']['ai_calls']+=result['diagnostics'].get('provider_calls',0)
                 for name in ('input_tokens','output_tokens'):
@@ -613,19 +631,24 @@ class VideoJobService:
         validated=_segments(rows,job['metadata']['duration_ms'])
         rows=[dict(mapping[s.id],**s.as_dict(),quality=mapping[s.id].get('quality','draft')) for s in validated]
         await self._write_timeline(job,rows)
-        if approved:await self._approve_memory(job,approved)
+        if approved:await self._approve_memory(job, {row['id'] for row in approved}, rows)
         job['outputs']={};job['status']='ready';await self._save(job)
         return await self.detail(ident)
 
-    async def _approve_memory(self,job,rows):
+    async def _approve_memory(self,job,approved_ids,timeline):
         opts=VideoOptions(**job['options']);settings=self.manager.settings()
         if opts.private or not opts.save_memory or not settings.memory_enabled:
             return
         version=job['glossary_version'];model=job['translation_model'];namespace=job['namespace']
-        for row in rows:
+        contextual = settings.context_enabled and opts.source in ('zh', 'ja', 'ko')
+        for index, row in enumerate(timeline):
+            if row['id'] not in approved_ids:
+                continue
+            cue = _context_for_provider(row['text'], _cue_context(timeline, index), opts.characters) if contextual else {}
+            scope = video_cue_scope(job['id'], cue, 'global')
             await self.manager.memory.put_verified(MemoryEntry(namespace=namespace,original_text=row['text'],translation=row['translation'],
                 source_language=opts.source,profile=opts.profile,mode=opts.mode,provider='api',model=model,glossary_version=version,
-                context_scope='global',source_type='VIDEO',project_id=job['id'],quality='user_approved',
+                context_scope=scope,source_type='VIDEO',project_id=job['id'],quality='user_approved',
                 context_information=dict(video_id=job['id']),confidence_metadata=dict(user_approved=True,recognition_confidence=row.get('confidence'))))
         self.manager.invalidate()
 

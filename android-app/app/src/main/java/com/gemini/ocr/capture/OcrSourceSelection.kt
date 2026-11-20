@@ -28,10 +28,23 @@ object OcrSourceSelection {
     fun select(raw: List<OcrBlock>, crop: Rect?, language: String, frameHeight: Int,
                region: String, subtitleFocus: Boolean, oneFrame: Boolean,
                standaloneTurbo: Boolean, stabilizeBeforeCloud: Boolean, displayed: String?,
-               stability: StableText, cloudStability: StableText): Result {
+               stability: StableText, cloudStability: StableText, previousSubtitle: OcrBlock? = null): Result {
         // The explicit frame action still translates the selected source language. Without
         // this guard an old Vietnamese overlay can become a new Chinese subtitle request.
-        val recognized = if (crop != null) SubtitleRegion.merge(raw, crop, language, subtitleFocus || !oneFrame) else raw
+        val merged = if (crop != null) SubtitleRegion.merge(raw, crop, language, subtitleFocus || !oneFrame) else raw
+        val recognized = if (crop != null && subtitleFocus && !oneFrame && previousSubtitle != null) {
+            val previous = previousSubtitle.rect
+            val nearSubtitle = raw.filter { block ->
+                val bounds = block.rect
+                val gap = maxOf(previous.top - (bounds.bottom + crop.top), bounds.top + crop.top - previous.bottom)
+                gap <= previous.height() || bounds.height() >= .70f * previous.height()
+            }
+            val confirmed = if (nearSubtitle.size < raw.size) SubtitleRegion.merge(nearSubtitle, crop, language, true)
+                else emptyList()
+            // Require the previous subtitle to be present in this frame. Never confirm a reply
+            // from retained text or turn a changed name, number or negation into the old line.
+            if (confirmed.singleOrNull()?.text == previousSubtitle.text) confirmed else merged
+        } else merged
         if (subtitleFocus && displayed != null &&
             SubtitleText.isRenderedCopy(recognized.joinToString(" ") { it.text }, displayed)) {
             // Preserve the existing early return: an overlay copy must not advance stability.

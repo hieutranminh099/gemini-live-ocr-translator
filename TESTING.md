@@ -110,3 +110,14 @@ python scripts/build_android.py --offline --max-workers=1 --stacktrace assembleD
 Kết quả phiên này: **15 test JVM độc lập đạt**, gồm 11 test điều phối trước đây, hai ca playback/extraction bổ sung và hai ca quyền ưu tiên playback. Compiler 2.1.10 chạy trực tiếp từ dependency có sẵn; không thay bằng kết quả Gradle. Các test tích hợp Robolectric mới chưa chạy được. Gradle bị chặn trước compile vì socket localhost trả `Permission denied: getsockopt`; `--no-daemon` vẫn cần single-use daemon. Cache còn thiếu Media3 1.5.1; thử đọc metadata công khai từ Maven Google thất bại DNS. Không xóa cache, mở quyền socket, đổi DNS/proxy hay toolchain. Chưa có APK mới, test emulator/điện thoại, OCR/ASR native, Gemini thật hoặc số đo xử lý phim/RAM.
 
 Diff trước sửa, bản sao các file được giao, log và runner độc lập nằm tại `build/batch-integration-20261110-v1812/`. Lệnh tái lập phần độc lập: `python build/batch-integration-20261110-v1812/run_core_tests.py`. Thời gian JUnit là thời gian chạy fixture, không phải hiệu năng xử lý 10 tập phim.
+
+## Kiểm tra nhiễu OCR và ngữ cảnh phim
+
+Trên Linux có FFmpeg, RapidOCR và một font CJK từ fixture, lệnh sau tạo video tổng hợp, chạy cùng bộ nhận dạng với bộ lọc tắt rồi bật, và in số cue nhiễu cùng thời gian hai lượt.
+
+```bash
+python -m pytest tests/test_video_media.py -q -s -k moving_watermark
+python -m pytest tests/test_video_jobs.py -q
+```
+
+Clip hai giây có logo cố định, watermark di chuyển và một phụ đề thật. Trên máy Cloud, lượt đo cùng clip cho 4 cue dính nhiễu khi tắt và 0 khi bật, với một cue phụ đề đúng sau lọc. Thời gian hai lượt lần lượt là 4,31 và 4,29 giây. Đây là phép đo trên clip tổng hợp, mỗi cấu hình chạy một lượt. Ca giả lập bổ sung kiểm tra giữ thay đổi chữ số chỉ tồn tại một mẫu. Các bài test quản lý ngữ cảnh và kho dùng provider giả lập. Dùng dữ liệu tham chiếu trong [research/local_translation](research/local_translation/README.md) khi đánh giá bản dịch từ model thật.

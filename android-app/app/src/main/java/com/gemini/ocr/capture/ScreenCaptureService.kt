@@ -612,10 +612,15 @@ class ScreenCaptureService : Service() {
                         rowTracker.observe(rows, SubtitleRegion.pixels(settings.subtitleRegion, frame.width, frame.height))
                     }
                     val displayed = translatedFrame?.let { value -> (0 until value.length()).joinToString(" ") { value.getJSONObject(it).getString("text") } }
+                    val previousSubtitle = lastBlocks.singleOrNull()?.takeIf {
+                        settings.filterSubtitleNoise && lastFrameSourceAt > 0L &&
+                            frame.sourceAt - lastFrameSourceAt in 1L..500L &&
+                            lastSize.first == frame.width && lastSize.second == frame.height
+                    }
                     val selection = OcrSourceSelection.select(raw, crop, settings.language, frame.height,
                         settings.region, settings.subtitleFocus, oneFrame,
                         isStandaloneActive() && settings.turboLatency, settings.stabilizeBeforeCloud,
-                        displayed, stability, cloudStability)
+                        displayed, stability, cloudStability, previousSubtitle)
                     nativeOcrMs = if (reused) 0L else SystemClock.elapsedRealtime() - started
                     lastOcrWorkMs = nativeOcrMs
                     if (!reused) SessionState.ocrMs.value = nativeOcrMs

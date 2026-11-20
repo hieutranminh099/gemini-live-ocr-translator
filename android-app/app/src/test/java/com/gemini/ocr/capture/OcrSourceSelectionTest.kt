@@ -65,6 +65,18 @@ class OcrSourceSelectionTest {
         }
     }
 
+    @Test fun distantSmallWatermarkIsExcludedOnlyWhenTheOldSubtitleIsStillPresent() {
+        val subtitle = OcrBlock("zh", "还有50元", Rect(250, 160, 550, 200))
+        val watermark = OcrBlock("logo", "电视台", Rect(40, 15, 120, 35))
+        val previous = select(listOf(subtitle)).blocks.single()
+        fun filtered(vararg raw: OcrBlock) = OcrSourceSelection.select(raw.toList(), crop, "zh", 1000,
+            "subtitle", true, false, true, false, null, stability, cloudStability, previous).blocks
+        assertEquals("还有50元", filtered(watermark, subtitle).single().text)
+        assertEquals("还有50元", filtered(watermark.copy(rect = Rect(80, 25, 160, 45)), subtitle).single().text)
+        assertEquals("还有5元", filtered(subtitle.copy(text = "还有5元")).single().text)
+        assertTrue(filtered().isEmpty())
+    }
+
     @Test fun disappearanceAndNextSentenceInvalidateOldReplyWithTrace() {
         val pipeline = SubtitlePipeline("synthetic-roi")
         fun observe(result: OcrSourceSelection.Result) {

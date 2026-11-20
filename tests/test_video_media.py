@@ -297,7 +297,17 @@ def test_real_decode_ocr_pipeline_merges_consecutive_results(tiny_video):
     run(scenario())
 
 
-def test_real_burned_in_chinese_ocr_timing_no_duplicate_cues(tmp_path):
+@pytest.fixture
+def chinese_fixture_font():
+    font_path = next((path for path in (
+        Path('C:/Windows/Fonts/msyh.ttc'),
+        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
+    ) if path.is_file()), None)
+    if font_path is None:
+        pytest.skip('Chinese Unicode fixture font is unavailable.')
+    return str(font_path)
+
+def test_real_burned_in_chinese_ocr_timing_no_duplicate_cues(tmp_path, chinese_fixture_font):
     """Test B uses real FFmpeg + RapidOCR, not the deterministic recognizer above."""
     if TOOLS is None:
         pytest.skip('Portable FFmpeg/ffprobe are not installed.')
@@ -305,15 +315,9 @@ def test_real_burned_in_chinese_ocr_timing_no_duplicate_cues(tmp_path):
     Image = pytest.importorskip('PIL.Image')
     ImageDraw = pytest.importorskip('PIL.ImageDraw')
     ImageFont = pytest.importorskip('PIL.ImageFont')
-    font_path = next((path for path in (
-        Path('C:/Windows/Fonts/msyh.ttc'),
-        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
-    ) if path.is_file()), None)
-    if font_path is None:
-        pytest.skip('Chinese Unicode fixture font is unavailable.')
     directory = tmp_path / '字幕 OCR'
     directory.mkdir()
-    font = ImageFont.truetype(str(font_path), 44)
+    font = ImageFont.truetype(chinese_fixture_font, 44)
     for second, text in enumerate(('你好世界', '', '再见世界')):
         image = Image.new('RGB', (960, 540), '#14242c')
         if text:
@@ -375,5 +379,49 @@ def test_real_mkv_selects_requested_subtitle_language(tiny_video, tmp_path):
         selected = _preferred_subtitle_stream(tracks, 'zh')
         cues = await extract_subtitle_stream(multilingual, selected['index'], TOOLS)
         assert [cue.text for cue in cues] == ['你好世界', '再见世界']
+
+    run(scenario())
+
+
+def test_real_video_with_moving_watermark_preserves_primary_subtitle(tmp_path, chinese_fixture_font):
+    from app.video_ocr import RapidOcrRecognizer
+
+    if TOOLS is None:
+        pytest.skip('FFmpeg and ffprobe are required.')
+    pytest.importorskip('rapidocr_onnxruntime')
+    from PIL import Image, ImageDraw, ImageFont
+
+
+    dialogue_font = ImageFont.truetype(chinese_fixture_font, 36)
+    logo_font = ImageFont.truetype(chinese_fixture_font, 22)
+    for frame in range(24):
+        image = Image.new('RGB', (640, 360), '#14242c')
+        draw = ImageDraw.Draw(image)
+        if frame < 20:
+            draw.text((250, 285), '你好世界', font=dialogue_font, fill='white')
+        draw.text((22, 122), '频道', font=logo_font, fill='#424f55')
+        if 6 <= frame < 15:
+            draw.text((50 + (frame - 6) * 53, 213), '电视台', font=logo_font, fill='#65767e')
+        image.save(tmp_path / f'logo-{frame:03}.png')
+    source = tmp_path / 'moving-watermark.mkv'
+
+    async def scenario():
+        from time import perf_counter
+
+        await run_tool([TOOLS.ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin',
+                        '-framerate', '12', '-i', tmp_path / 'logo-%03d.png',
+                        '-c:v', 'libx264', '-threads', '1', '-pix_fmt', 'yuv420p', source])
+        recognizer = await asyncio.to_thread(RapidOcrRecognizer, 'zh')
+        for stabilize in (False, True):
+            start = perf_counter()
+            cues = await ocr_video(source, TOOLS, recognizer=recognizer, language='zh',
+                                   roi=(0., .3, 1., 1.), stabilize=stabilize)
+            noise_cues = sum('电视台' in cue.text or '频道' in cue.text for cue in cues)
+            print(f'moving-watermark media: stabilize={stabilize} cues={len(cues)} '
+                  f'noise_cues={noise_cues} elapsed_ms={1000 * (perf_counter() - start):.1f}')
+            assert any('你好世界' in cue.text for cue in cues)
+            if stabilize:
+                assert [cue.text for cue in cues] == ['你好世界']
+                assert 1500 <= cues[0].end_ms <= 2000
 
     run(scenario())

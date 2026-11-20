@@ -8,7 +8,7 @@ from .provider import TranslationError
 from .storage import normalize
 from .telemetry import current_trace, duration
 from .resources import ResourceManager
-from .translation_memory import MemoryEntry, TranslationMemoryManager
+from .translation_memory import MemoryEntry, TranslationMemoryManager, video_cue_scope
 
 
 class TranslationManager:
@@ -106,8 +106,12 @@ class TranslationManager:
         if any(not t for t in texts):
             raise TranslationError('empty_text', 'Không có văn bản hợp lệ để dịch.')
         keys = [hashlib.sha256((namespace + t).encode()).hexdigest() for t in texts]
+        memory_scopes = {}
         if cue_contexts is not None:
             keys = [(key, index) for index, key in enumerate(keys)]
+            if memory_lookup_enabled or memory_write_enabled:
+                memory_scopes = {key: video_cue_scope(project_id, cue, context_scope)
+                                 for key, cue in zip(keys, cue_contexts, strict=True)}
         results = {}
         cached_keys = set()
         missing = {}
@@ -115,7 +119,7 @@ class TranslationManager:
         def lookup(text, key):
             hit = exact.get(text)
             if hit is None and memory_lookup_enabled:
-                memory_hit = self.memory.lookup(namespace, text, context_scope=context_scope)
+                memory_hit = self.memory.lookup(namespace, text, context_scope=memory_scopes.get(key, context_scope))
                 if memory_hit is not None:
                     hit = memory_hit['translation']
             if hit is None and cache_enabled:
@@ -176,7 +180,7 @@ class TranslationManager:
                     self.memory.enqueue_draft(MemoryEntry(namespace=namespace,
                         original_text=original_raw, translation=translated, source_language=request.source,
                         profile=request.profile, mode=request.mode, provider=settings.provider, model=model,
-                        glossary_version=glossary_hash, context_scope=context_scope,
+                        glossary_version=glossary_hash, context_scope=memory_scopes.get(key, context_scope),
                         source_type=source_type, project_id=project_id,
                         context_information=context_information or {},
                         confidence_metadata=confidence_metadata or {}))

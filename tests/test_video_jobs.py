@@ -621,3 +621,40 @@ async def test_character_notes_stay_local_and_pending_notes_are_excluded(video_e
     await video_env.service.start(second['id'])
     assert (await finished(video_env.service, second['id']))['status'] == 'ready'
     assert all('confirmed_characters' not in cue for cue in video_env.api.calls[-1][1]['cue_contexts'])
+
+@pytest.mark.parametrize('language,source', [
+    ('zh', '他不是我哥。'),
+    ('ja', '彼は私の兄じゃない。'),
+    ('ko', '그 사람은 내 오빠가 아니야.'),
+])
+def test_missing_explicit_negation_flag(language, source):
+    assert video_module._translation_review_flags(source, 'Anh ấy là anh tôi.', language) == ['check_negation']
+    assert video_module._translation_review_flags(source, 'Anh ấy không phải anh tôi.', language) == []
+
+
+def test_only_confirmed_character_name_can_raise_review_flag():
+    notes = [video_module.VideoCharacter(source_name='林月', vietnamese_name='Lâm Nguyệt', confirmed=True),
+             video_module.VideoCharacter(source_name='小雨', vietnamese_name='Tiểu Vũ')]
+    assert video_module._translation_review_flags('林月，小雨。', 'Nguyệt, Vũ.', 'zh', notes) == ['check_character_name']
+    assert video_module._translation_review_flags('林月，小雨。', 'Lâm Nguyệt, Vũ.', 'zh', notes) == []
+
+
+async def test_approved_repeated_dialogue_stays_scoped_to_project_and_neighbors(video_env):
+    env = video_env
+    settings = env.manager.settings().model_dump(exclude={'api_key'})
+    env.store.set('settings', dict(settings, memory_enabled=True))
+    env.rows = source_segments(3, ['请坐', '谢谢', '请坐'])
+    first, _ = await upload(env.service)
+    await env.service.start(first['id'], dict(private=False, save_memory=True))
+    result = await finished(env.service, first['id'])
+    await env.service.edit(first['id'], [dict(id=result['segments'][0]['id'], translation='Cô ngồi đi.')])
+    entries = env.manager.memory.list_entries()
+    repeated = [entry for entry in entries if entry['original_text'] == '请坐']
+    assert len(repeated) == 2 and len({entry['context_scope'] for entry in repeated}) == 2
+    assert {entry['quality'] for entry in repeated} == {'draft', 'user_approved'}
+    second, _ = await upload(env.service)
+    await env.service.start(second['id'], dict(private=False, use_memory=True))
+    other = await finished(env.service, second['id'])
+    assert other['segments'][0]['translation'] == 'VI:请坐'
+    live = await env.manager.translate(frame('请坐'), 'live-device', allow_cache=False)
+    assert live['blocks'][0]['text'] == 'VI:请坐'

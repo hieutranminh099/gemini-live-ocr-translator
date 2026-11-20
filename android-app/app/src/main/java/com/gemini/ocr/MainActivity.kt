@@ -439,6 +439,14 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.weight(1f)) { Text("Thu nhỏ ảnh nhận diện"); Text("Giảm dữ liệu xử lý khi vùng chữ đủ rõ.", color = Muted, style = MaterialTheme.typography.bodySmall) }
             Switch(fast, { fast = it; settings.fastOcrDownscale = it }, enabled = !running, modifier = Modifier.testTag("fast_ocr_downscale_switch"))
         }
+        var filterNoise by rememberSaveable(settings.filterSubtitleNoise) { mutableStateOf(settings.filterSubtitleNoise) }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Lọc chữ nhiễu trong dải phụ đề")
+                Text("Bỏ chữ nhỏ nằm xa dòng phụ đề còn hiện khi quét tự động.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(filterNoise, { filterNoise = it; settings.filterSubtitleNoise = it }, enabled = !running)
+        }
         var correction by rememberSaveable(settings.ocrPreCorrection) { mutableStateOf(settings.ocrPreCorrection) }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Sửa lỗi chữ theo kho đã xác nhận"); Text("Dùng quy tắc và câu đã xác nhận phù hợp với chế độ đang chọn.", color = Muted, style = MaterialTheme.typography.bodySmall) }

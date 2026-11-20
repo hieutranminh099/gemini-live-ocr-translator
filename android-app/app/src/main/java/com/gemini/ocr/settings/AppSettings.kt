@@ -121,6 +121,10 @@ class AppSettings(context: Context) {
         get() = prefs.getInt("hybridCharThreshold", 15).coerceIn(5, 60)
         set(value) { prefs.edit().putInt("hybridCharThreshold", value.coerceIn(5, 60)).apply() }
 
+    var filterSubtitleNoise: Boolean
+        get() = prefs.getBoolean("filterSubtitleNoise", false)
+        set(value) { prefs.edit().putBoolean("filterSubtitleNoise", value).apply() }
+
     var ocrPreCorrection: Boolean
         get() = prefs.getBoolean("ocrPreCorrection", true)
         set(value) { prefs.edit().putBoolean("ocrPreCorrection", value).apply() }
