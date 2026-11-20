@@ -99,3 +99,7 @@ Không chạy các cấu hình song song để so sánh độ trễ. `validate_r
 | `dialogue100.jsonl` | `333173544f116ce3e2db2118b5c645782071c013a5ef9b15fed053a1a11c930b` |
 | CTranslate2 INT8 `model.bin` | `46ac4c76bc88978a19fcc04e0c7317ee58cb872b8c2c3f2c23c7ca189b1ac4dc` |
 | CTranslate2 FP32 `model.bin` | `0c7029255915602e4491432465c129067766f44780401c83aa2dd3262478e0c0` |
+
+### Đánh giá chủ ngữ và xưng hô
+
+`dialogue-context-cases.tsv` bổ sung 15 tình huống tổng hợp Trung, Nhật, Hàn cho `dialogue100.jsonl`. Cột `before` và `after` chứa câu lân cận khi có. Cột `check` nêu các chi tiết cần đối chiếu với nguyên văn và bản tham chiếu. Chấp nhận nhiều cách diễn đạt tiếng Việt nếu giữ đúng ngôi, quan hệ, số, tên và phủ định. Khi so sánh hai phiên bản, giữ nguyên model, profile, thứ tự cue và video hoặc tập nguồn. Chỉ đưa cue nguồn và ngữ cảnh vào request. Giữ bản tham chiếu và tiêu chí chấm bên ngoài request.

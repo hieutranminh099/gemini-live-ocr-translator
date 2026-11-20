@@ -35,7 +35,7 @@ class PersonalVideoManager:
     def settings(self):
         # The existing media runner's 'api' gate denotes an official backend.
         # This store is never shared with the Gemini/Live store or its cache.
-        return SimpleNamespace(provider='api', memory_enabled=False,
+        return SimpleNamespace(provider='api', memory_enabled=False, context_enabled=True,
             fast_model=self.client.selected_model, smart_model=self.client.selected_model,
             quality_model=self.client.selected_model)
 
@@ -44,9 +44,12 @@ class PersonalVideoManager:
             raise ChatGPTError('CHATGPT_CONNECTION_CHANGED', 'Kết nối thay đổi. Tiến độ được giữ để tiếp tục.')
 
     async def translate(self, request, device_id, **kwargs):
+        rows = [dict(id=block.id, text=block.text) for block in request.blocks]
+        if cue_contexts := kwargs.get('cue_contexts'):
+            for row, cue_context in zip(rows, cue_contexts, strict=True):
+                row['context'] = cue_context
         async with self.resources.permit('video'):
-            accepted, usage = await self.client.translate_rows(
-                [dict(id=b.id, text=b.text) for b in request.blocks], request.source)
+            accepted, usage = await self.client.translate_rows(rows, request.source)
         return dict(blocks=[dict(id=b.id, text=accepted[b.id], cached=False) for b in request.blocks],
             diagnostics=dict(provider_calls=usage.get('provider_calls', 1), input_tokens=usage.get('input_tokens', 0), output_tokens=usage.get('output_tokens', 0)))
 

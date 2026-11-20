@@ -47,7 +47,7 @@ class TranslationManager:
     async def translate(self, request, device_id, *, queued_at=None, cache_only=False, is_current=None,
                         priority='live', allow_cache=True, persist_memory=True, use_memory=True,
                         context_scope='global', source_type='LIVE', project_id='', allow_context=True,
-                        context_information=None, confidence_metadata=None):
+                        context_information=None, confidence_metadata=None, cue_contexts=None):
         if priority not in ('live', 'video') or source_type not in ('LIVE', 'VIDEO'):
             raise ValueError('Invalid translation source/priority')
         trace = {'timings_ms': {'queue': 0.0, 'cache': 0.0, 'provider': 0.0}, 'diagnostics': {}}
@@ -59,7 +59,7 @@ class TranslationManager:
                 priority=priority, allow_cache=allow_cache, persist_memory=persist_memory, use_memory=use_memory,
                 context_scope=context_scope, source_type=source_type, project_id=project_id,
                 allow_context=allow_context, context_information=context_information,
-                confidence_metadata=confidence_metadata)
+                confidence_metadata=confidence_metadata, cue_contexts=cue_contexts)
             if result is None:
                 return None
             trace['timings_ms']['queue'] += trace['timings_ms']['mailbox_queue']
@@ -87,7 +87,7 @@ class TranslationManager:
     async def _translate(self, request, device_id, *, cache_only=False, is_current=None,
                          priority='live', allow_cache=True, persist_memory=True, use_memory=True,
                          context_scope='global', source_type='LIVE', project_id='', allow_context=True,
-                         context_information=None, confidence_metadata=None):
+                         context_information=None, confidence_metadata=None, cue_contexts=None):
         start = time.monotonic()
         revision = self.revision
         settings = self.settings()
@@ -106,6 +106,8 @@ class TranslationManager:
         if any(not t for t in texts):
             raise TranslationError('empty_text', 'Không có văn bản hợp lệ để dịch.')
         keys = [hashlib.sha256((namespace + t).encode()).hexdigest() for t in texts]
+        if cue_contexts is not None:
+            keys = [(key, index) for index, key in enumerate(keys)]
         results = {}
         cached_keys = set()
         missing = {}
@@ -146,12 +148,16 @@ class TranslationManager:
                           tuple(missing.values()), json.dumps(context[-count:], ensure_ascii=False, sort_keys=True),
                           session_key)
             pending_items = list(missing.items())
+            provider_options = {}
+            if cue_contexts is not None:
+                provider_options['cue_contexts'] = [cue_contexts[key[1]] for key, _ in pending_items]
+                flight_key += (project_id, json.dumps(provider_options['cue_contexts'], ensure_ascii=False),)
             def recheck():
                 return [lookup(text, key) for key, text in pending_items]
             response = await self._provider_output(flight_key, settings, list(missing.values()),
                 priority=priority, revision=revision, is_current=is_current, lookup=recheck,
                 source=request.source, profile=request.profile, mode=request.mode,
-                model=model, glossary=glossary, context=context[-count:], session_key=session_key)
+                model=model, glossary=glossary, context=context[-count:], session_key=session_key, **provider_options)
             if response is None:
                 return None
             output, refreshed = response
@@ -271,6 +277,8 @@ class TranslationManager:
                 trace=current_trace.get()
                 if trace is not None:
                     trace['diagnostics']['provider_calls']=trace['diagnostics'].get('provider_calls',0)+1
+                if 'cue_contexts' in kwargs:
+                    kwargs = dict(kwargs, cue_contexts=[kwargs['cue_contexts'][index] for index in missing])
                 started = time.monotonic()
                 try:
                     translated, input_tokens, output_tokens = await self.provider.translate(

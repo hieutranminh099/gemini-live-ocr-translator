@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path, PureWindowsPath
 import secrets
 import shutil
@@ -18,7 +19,8 @@ import sys
 import time
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
+from typing import Annotated, Literal
+import unicodedata
 
 from .models import TranslateRequest
 from .provider import TranslationError
@@ -33,6 +35,16 @@ ALLOWED_EXTENSIONS = {'.mp4','.mkv','.mov','.webm','.avi','.m4v','.mts','.ts'}
 ACTIVE = {'queued','extracting','translating','exporting','paused','waiting_live'}
 
 
+class VideoCharacter(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    source_name: str = Field(min_length=1, max_length=80)
+    vietnamese_name: str = Field(default='', max_length=80)
+    aliases: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(default_factory=list, max_length=8)
+    relationships: str = Field(default='', max_length=240)
+    forms_of_address: str = Field(default='', max_length=240)
+    confirmed: bool = False
+
+
 class VideoOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source: Literal['zh','ja','ko','en'] = 'zh'
@@ -41,10 +53,59 @@ class VideoOptions(BaseModel):
     profile: Literal['game','manga','document','web','technical'] = 'game'
     mode: Literal['fast','smart','quality'] = 'fast'
     model: str | None = Field(default=None, max_length=100)
+    stabilize_ocr: bool = True
+    characters: list[VideoCharacter] = Field(default_factory=list, max_length=40)
     use_memory: bool = True
     private: bool = True
     save_memory: bool = False
     roi: tuple[float,float,float,float] = (0.,.6,1.,.95)
+
+
+_SUBTITLE_LANGUAGES = {
+    'zh': {'zh', 'zho', 'chi', 'cmn', 'yue'},
+    'ja': {'ja', 'jpn'},
+    'ko': {'ko', 'kor'},
+    'en': {'en', 'eng'},
+}
+
+
+def _preferred_subtitle_stream(streams, source):
+    def rank(stream):
+        language = stream.get('language', '').strip().lower().replace('_', '-').split('-')[0]
+        if language in _SUBTITLE_LANGUAGES[source]:
+            return 0
+        return 1 if language in ('', 'und') else 2
+
+    return min(streams, key=rank, default=None)
+
+
+def _cue_context(rows, index):
+    def sources(neighbors):
+        return [normalize(row['text'])[:240] for row in neighbors]
+
+    return (tuple(sources(rows[max(0, index - 4):index])),
+            tuple(sources(rows[index + 1:index + 3])))
+
+
+def _context_for_provider(text, neighbors, characters):
+    before, after = neighbors
+    evidence = '\n'.join((*before, text, *after))
+    relevant = [character.model_dump(exclude={'confirmed'}) for character in characters
+                if character.confirmed and any(name and name in evidence
+                                               for name in (character.source_name, *character.aliases))]
+    context = dict(before=before, after=after)
+    if relevant:
+        context['confirmed_characters'] = relevant[:4]
+    return context
+
+
+def _translation_review_flags(source, translation):
+    # A missing explicit numeral merits review even if it was spelled out
+    # correctly. Keep the draft and avoid a second provider call.
+    def numerals(text):
+        return set(re.findall(r'[0-9]+', unicodedata.normalize('NFKC', text)))
+
+    return ['check_numbers'] if numerals(source) - numerals(translation) else []
 
 
 def _atomic_json(path, value):
@@ -359,7 +420,9 @@ class VideoJobService:
                     method='speech'
                 job['extraction_method']=method
                 if method=='subtitle':
-                    index=opts.stream_index if opts.stream_index is not None else (text_streams[0]['index'] if text_streams else None)
+                    preferred = (_preferred_subtitle_stream(text_streams, opts.source) if opts.method == 'auto'
+                                 else next(iter(text_streams), None))
+                    index = opts.stream_index if opts.stream_index is not None else (preferred['index'] if preferred else None)
                     if index is None:
                         raise VideoMediaError('no_text_subtitles','Không có luồng phụ đề văn bản. Hãy chọn OCR hoặc Speech.')
                     segments=await extract_subtitle_stream(folder/job['input'],index,self.tools,wait_ready=ready,cancel_event=self.cancel_event)
@@ -387,7 +450,7 @@ class VideoJobService:
                         await progress(value)
                     segments=await ocr_video(folder/job['input'],self.tools,recognizer=recognizer,roi=opts.roi,
                         language=opts.source,wait_ready=ready,cancel_event=self.cancel_event,progress=ocr_progress,
-                        start_ms=job.get('extraction_progress_ms',0),checkpoint=checkpoint)
+                        start_ms=job.get('extraction_progress_ms',0),checkpoint=checkpoint,stabilize=opts.stabilize_ocr)
                     segments=[VideoSegment(**{k:row[k] for k in VideoSegment.__dataclass_fields__ if k in row}) for row in saved]
                     duration=job['metadata']['duration_ms']
                     if (not job.get('ocr_frames_observed') or
@@ -438,36 +501,43 @@ class VideoJobService:
                 job['extraction_complete']=True
                 await self._save(job)
             missing={}
-            for row in rows:
+            contextual = self.manager.settings().context_enabled and opts.source in ('zh', 'ja', 'ko')
+            for index, row in enumerate(rows):
                 if not row.get('translation','').strip():
-                    missing.setdefault(normalize(row['text']),[]).append(row)
+                    neighbors = _cue_context(rows, index) if contextual else ((), ())
+                    missing.setdefault((normalize(row['text']), neighbors), []).append(row)
             entries=list(missing.items())
             batches=[];batch=[];chars=0
-            for text,items in entries:
+            for (text, neighbors), items in entries:
                 if batch and (len(batch)>=10 or chars+len(text)>6000):
                     batches.append(batch);batch=[];chars=0
-                batch.append((text,items));chars+=len(text)
+                batch.append((text, items, neighbors));chars+=len(text)
             if batch:batches.append(batch)
             for batch_index,batch in enumerate(batches):
                 await ready('translating')
                 request=TranslateRequest.model_validate(dict(request_id=f'video-{ident}-{batch_index}',source=opts.source,profile=opts.profile,mode=opts.mode,
-                    blocks=[dict(id=f's{i}',text=text,box=dict(x=0,y=0,width=1,height=1)) for i,(text,_) in enumerate(batch)]))
+                    blocks=[dict(id=f's{i}',text=text,box=dict(x=0,y=0,width=1,height=1)) for i,(text, _, _) in enumerate(batch)]))
                 try:
                     result=await self.manager.translate(request,'video:'+ident,priority='video',allow_cache=False,
                         use_memory=opts.use_memory,persist_memory=opts.save_memory and not opts.private,
                         context_scope='global' if not opts.private else 'project:'+ident,source_type='VIDEO',project_id=ident,
-                        allow_context=not opts.private,context_information=dict(video_id=ident,batch=batch_index),
+                        allow_context=False,
+                        cue_contexts=[_context_for_provider(text, neighbors, opts.characters)
+                                      for text, _, neighbors in batch] if contextual else None,
+                        context_information=dict(video_id=ident,batch=batch_index),
                         confidence_metadata=dict(extraction=opts.method,not_human_verified=True))
                 except TranslationError as error:
                     job['progress']['ai_calls']+=getattr(error,'diagnostics',{}).get('provider_calls',0)
                     raise
                 if result is None or len(result['blocks'])!=len(batch):
                     raise VideoMediaError('invalid_mapping','Gemini chưa trả đủ ID phụ đề; chưa ghi checkpoint của batch.')
-                for i,((text,items),block) in enumerate(zip(batch,result['blocks'])):
+                for i,((text, items, _), block) in enumerate(zip(batch,result['blocks'])):
                     if block['id']!=f's{i}':
                         raise VideoMediaError('invalid_mapping','ID kết quả không khớp đoạn nguồn.')
                     for row in items:
-                        row['translation']=block['text'];row['quality']='draft'
+                        row['translation'] = block['text']
+                        row['quality'] = 'draft'
+                        row['review_flags'] = _translation_review_flags(row['text'], block['text'])
                     job['progress']['cache_hits']+=int(block['cached'])
                 job['progress']['ai_calls']+=result['diagnostics'].get('provider_calls',0)
                 for name in ('input_tokens','output_tokens'):
@@ -537,9 +607,9 @@ class VideoJobService:
             for key in ('text','translation','start_ms','end_ms'):
                 if key in change:row[key]=change[key]
             if row['text']!=old_text and row.get('translation')==old_translation and change.get('quality')!='user_approved':
-                row['translation']='';row['quality']='draft'
+                row['translation']='';row['quality']='draft';row.pop('review_flags', None)
             elif (row.get('translation','') and (row.get('translation')!=old_translation or change.get('quality')=='user_approved')):
-                row['quality']='user_approved';approved.append(row)
+                row['quality']='user_approved';row.pop('review_flags', None);approved.append(row)
         validated=_segments(rows,job['metadata']['duration_ms'])
         rows=[dict(mapping[s.id],**s.as_dict(),quality=mapping[s.id].get('quality','draft')) for s in validated]
         await self._write_timeline(job,rows)

@@ -81,3 +81,11 @@ Số dòng vật lý tại commit khảo sát; kích thước chỉ giúp địn
 | Android tests lặp setup service/prefs/socket và dùng reflection vào private field | Tách service dễ làm gãy test theo implementation | Fixture/seam nhỏ sau khi giữ behavior assertions; không xóa test để refactor dễ hơn. |
 
 Build Android dùng Gradle/AGP/Kotlin; Windows dùng Python requirements/PyInstaller. Không thấy workflow CI được tracked trong repository. Test mặc định chưa bao gồm các test harness ngoài `tests/`; cách chạy và các side effect được ghi một lần trong [TESTING.md](TESTING.md). Đợt này chỉ thêm tài liệu và checker, chưa thay mã ứng dụng/build hoặc thử kiến trúc.
+
+### Ngữ cảnh và lọc OCR cho video Companion
+
+- Khi ngữ cảnh được bật, các cue Trung, Nhật và Hàn nhận tối đa bốn câu nguồn trước và hai câu nguồn sau trong cùng timeline. Mỗi câu lân cận được giới hạn 240 ký tự. Các cue cùng nguyên văn chỉ dùng chung kết quả trong một lượt chạy nếu cửa sổ nguồn giống nhau. Gemini chỉ dịch các cue được yêu cầu. Video riêng tư giữ cửa sổ trong dự án và request hiện tại. Câu đã dịch ở checkpoint và các mục kho đã duyệt theo lựa chọn của người dùng tiếp tục được giữ.
+- Chế độ Auto ưu tiên track văn bản có mã ngôn ngữ khớp cấu hình, sau đó đến track chưa gán ngôn ngữ. Track do người dùng chỉ định luôn được ưu tiên. Các bản nháp bị thiếu chữ số có cờ `check_numbers` trong timeline để xem lại. Số viết bằng chữ cũng có thể bị đánh dấu. Kiểm tra này không tạo lượt gọi API mới.
+- Bộ lọc OCR video dùng biên dọc và độ tin cậy của từng dòng. Khi cùng phụ đề còn hiện, nó bỏ các dòng rời vùng có độ tin cậy thấp hơn. Một mẫu lệch vùng đơn lẻ có thể chờ đến mẫu kế tiếp và chỉ bị thay khi phụ đề cũ trở lại trong thời hạn. Dòng mới đúng vùng hoặc đủ tin cậy, kể cả một mẫu duy nhất, tiếp tục đi vào bộ tích lũy cue. Bộ lọc không so chữ gần đúng và chỉ giữ hai quan sát. Đặt `stabilize_ocr=false` trong tùy chọn nguồn của project qua API để dùng cách nhận diện trước đây. Logo trùng dòng hoặc cùng vùng, và nội dung chỉ hiện giữa hai mẫu, vẫn có thể gây lỗi.
+
+Tuỳ chọn `characters` trong project lưu tên gốc, tên Việt, bí danh, quan hệ và cách xưng hô do người dùng ghi. Gemini và luồng ChatGPT cá nhân chỉ nhận các ghi chú đã đánh dấu `confirmed` có tên hoặc bí danh xuất hiện trong cửa sổ câu. Tối đa bốn ghi chú mỗi cue. Ghi chú chưa xác nhận nằm trong project để xem lại.

@@ -18,9 +18,18 @@ from .video_media import (INPUT_FORMATS, Toolchain, VideoCancelled, VideoMediaEr
 
 
 @dataclass(frozen=True)
+class OcrLine:
+    text: str
+    confidence: float
+    top: float
+    bottom: float
+
+
+@dataclass(frozen=True)
 class OcrObservation:
     text: str
     confidence: float
+    lines: tuple[OcrLine, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,14 +85,69 @@ class RapidOcrRecognizer:
         if not result:
             return OcrObservation('', 0.)
         lines = []
+        source_pattern = {
+            'zh': r'[㐀-鿿豈-﫿]',
+            'ja': r'[぀-ヿ㐀-鿿]',
+            'ko': r'[가-힯ᄀ-ᇿ]',
+        }.get(self.language)
         for box, text, confidence in result:
-            source_text=str(text).strip()
-            source_pattern={'zh':r'[\u3400-\u9fff\uf900-\ufaff]','ja':r'[\u3040-\u30ff\u3400-\u9fff]','ko':r'[\uac00-\ud7af\u1100-\u11ff]'}.get(self.language)
-            if source_text and (source_pattern is None or re.search(source_pattern,source_text)):
-                lines.append((min(float(point[1]) for point in box), min(float(point[0]) for point in box), str(text).strip(), float(confidence)))
-        lines.sort(key=lambda line: (round(line[0] / 15), line[1]))
-        return OcrObservation(' '.join(line[2] for line in lines),
-                              sum(line[3] for line in lines) / len(lines)) if lines else OcrObservation('', 0.)
+            text = str(text).strip()
+            if text and (source_pattern is None or re.search(source_pattern, text)):
+                top = min(float(point[1]) for point in box)
+                bottom = max(float(point[1]) for point in box)
+                line = OcrLine(text, float(confidence), top / frame.height, bottom / frame.height)
+                lines.append((round(top / 15), min(float(point[0]) for point in box), line))
+        lines.sort(key=lambda item: item[:2])
+        return _observation(tuple(item[2] for item in lines))
+
+
+def _observation(lines):
+    if not lines:
+        return OcrObservation('', 0.)
+    return OcrObservation(' '.join(line.text for line in lines),
+                          sum(line.confidence for line in lines) / len(lines), lines)
+
+
+def _outside_subtitle_band(candidate, anchors):
+    return all(max(anchor.top - candidate.bottom, candidate.top - anchor.bottom)
+               > max(anchor.bottom - anchor.top, candidate.bottom - candidate.top) for anchor in anchors)
+
+
+class OcrNoiseFilter:
+    """Suppress isolated spatial outliers only when the same subtitle returns."""
+
+    def __init__(self, max_gap_ms):
+        self.max_gap_ms = max_gap_ms
+        self.previous = None
+        self.pending = None
+
+    def add(self, timestamp, observation):
+        if self.pending is not None:
+            time, candidate = self.pending
+            old_time, old = self.previous
+            if timestamp - old_time <= self.max_gap_ms and _identity(observation.text) == _identity(old.text):
+                candidate = old
+            self.previous = (time, candidate)
+            self.pending = None
+            yield time, candidate
+        if self.previous is not None and observation.lines:
+            time, previous = self.previous
+            if previous.lines and timestamp - time <= self.max_gap_ms:
+                previous_text = _identity(previous.text)
+                retained = tuple(line for line in observation.lines
+                                 if not (_outside_subtitle_band(line, previous.lines)
+                                         and line.confidence + .08 < previous.confidence))
+                if _identity(' '.join(line.text for line in retained)) == previous_text:
+                    observation = _observation(retained)
+                elif not retained:
+                    self.pending = (timestamp, observation)
+                    return
+        self.previous = (timestamp, observation)
+        yield timestamp, observation
+
+    def finish(self):
+        if self.pending is not None:
+            yield self.pending
 
 
 def _identity(text):
@@ -209,7 +273,7 @@ async def iter_video_frames(path, tools: Toolchain, *, metadata=None, roi=(.05, 
 async def ocr_video(path, tools: Toolchain, *, language='zh', recognizer=None,
                      roi=(.05, .65, .95, .98), sample_ms=250,
                      wait_ready=None, cancel_event=None, progress=None,
-                     checkpoint=None, start_ms=0):
+                     checkpoint=None, start_ms=0, stabilize=True):
     """OCR one ROI incrementally; callbacks may persist finished cues as checkpoints.
 
     Identical ROI pixels reuse the last observation for up to one second. This
@@ -221,6 +285,7 @@ async def ocr_video(path, tools: Toolchain, *, language='zh', recognizer=None,
     recognizer = recognizer or await asyncio.to_thread(RapidOcrRecognizer, language)
     accumulator = SubtitleAccumulator(language=language)
     last_hash, last_ocr, last_recognized_ms = None, OcrObservation('', 0.), -1000
+    noise_filter = OcrNoiseFilter(sample_ms * 3) if stabilize else None
     completed = 0
     async for frame in iter_video_frames(path, tools, metadata=metadata, roi=roi,
             sample_ms=sample_ms, wait_ready=wait_ready, cancel_event=cancel_event):
@@ -235,12 +300,17 @@ async def ocr_video(path, tools: Toolchain, *, language='zh', recognizer=None,
             last_hash, last_ocr, last_recognized_ms = fingerprint, observation, frame.timestamp_ms
         else:
             observation = last_ocr
-        accumulator.add(frame.timestamp_ms, observation)
-        if checkpoint is not None and len(accumulator.segments) > completed:
-            await checkpoint([segment.as_dict() for segment in accumulator.segments[completed:]], frame.timestamp_ms)
-            completed = len(accumulator.segments)
+        samples = noise_filter.add(frame.timestamp_ms, observation) if noise_filter else [(frame.timestamp_ms, observation)]
+        for timestamp, sample in samples:
+            accumulator.add(timestamp, sample)
+            if checkpoint is not None and len(accumulator.segments) > completed:
+                await checkpoint([segment.as_dict() for segment in accumulator.segments[completed:]], timestamp)
+                completed = len(accumulator.segments)
         if progress is not None:
             await progress(min(.999, frame.timestamp_ms / metadata.duration_ms))
+    if noise_filter:
+        for timestamp, sample in noise_filter.finish():
+            accumulator.add(timestamp, sample)
     result = accumulator.finish(metadata.duration_ms)
     if checkpoint is not None and len(result) > completed:
         await checkpoint([segment.as_dict() for segment in result[completed:]], metadata.duration_ms)

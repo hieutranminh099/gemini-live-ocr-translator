@@ -305,8 +305,11 @@ def test_real_burned_in_chinese_ocr_timing_no_duplicate_cues(tmp_path):
     Image = pytest.importorskip('PIL.Image')
     ImageDraw = pytest.importorskip('PIL.ImageDraw')
     ImageFont = pytest.importorskip('PIL.ImageFont')
-    font_path = Path('C:/Windows/Fonts/msyh.ttc')
-    if not font_path.is_file():
+    font_path = next((path for path in (
+        Path('C:/Windows/Fonts/msyh.ttc'),
+        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
+    ) if path.is_file()), None)
+    if font_path is None:
         pytest.skip('Chinese Unicode fixture font is unavailable.')
     directory = tmp_path / '字幕 OCR'
     directory.mkdir()
@@ -325,3 +328,52 @@ def test_real_burned_in_chinese_ocr_timing_no_duplicate_cues(tmp_path):
     assert [s.text for s in segments] == ['你好世界', '再见世界']
     assert [(s.start_ms, s.end_ms) for s in segments] == [(0, 1000), (2000, 3000)]
     assert all(s.confidence > .95 for s in segments)
+
+
+def test_ocr_filter_rejects_spatial_outliers_and_keeps_short_quantity_changes():
+    from app.video_ocr import OcrLine, OcrNoiseFilter, _observation
+
+    subtitle = OcrLine('还有50元', .97, .60, .70)
+    changed = OcrLine('还有5元', .96, .60, .70)
+    watermark = OcrLine('电视台', .82, .10, .18)
+    samples = [subtitle, (watermark, subtitle), watermark, subtitle, changed, subtitle]
+    observations = [_observation(lines if isinstance(lines, tuple) else (lines,)) for lines in samples]
+
+    def timeline(stabilize):
+        accumulator = SubtitleAccumulator()
+        noise_filter = OcrNoiseFilter(750)
+        for index, observation in enumerate(observations):
+            timestamp = index * 250
+            entries = noise_filter.add(timestamp, observation) if stabilize else [(timestamp, observation)]
+            for time, item in entries:
+                accumulator.add(time, item)
+        if stabilize:
+            for time, item in noise_filter.finish():
+                accumulator.add(time, item)
+        return [(cue.start_ms, cue.end_ms, cue.text) for cue in accumulator.finish(1500)]
+
+    baseline = timeline(False)
+    assert sum('电视台' in item[2] for item in baseline) == 2
+    assert timeline(True) == [(0, 1000, '还有50元'), (1000, 1250, '还有5元'), (1250, 1500, '还有50元')]
+
+
+def test_real_mkv_selects_requested_subtitle_language(tiny_video, tmp_path):
+    from app.video_jobs import _preferred_subtitle_stream
+
+    english = tmp_path / 'english.srt'
+    english.write_text('1\n00:00:00,400 --> 00:00:01,300\nHello world\n', encoding='utf-8')
+    multilingual = tmp_path / 'multilingual.mkv'
+
+    async def scenario():
+        await run_tool([TOOLS.ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin',
+                        '-i', tiny_video, '-i', english, '-map', '0:v:0', '-map', '1:s:0', '-map', '0:s:0',
+                        '-metadata:s:s:0', 'language=eng', '-metadata:s:s:1', 'language=zho',
+                        '-c', 'copy', multilingual])
+        metadata = await probe_video(multilingual, TOOLS)
+        tracks = [track for track in metadata.streams if track['type'] == 'subtitle' and track['is_text']]
+        assert [track['language'] for track in tracks] == ['eng', 'zho']
+        selected = _preferred_subtitle_stream(tracks, 'zh')
+        cues = await extract_subtitle_stream(multilingual, selected['index'], TOOLS)
+        assert [cue.text for cue in cues] == ['你好世界', '再见世界']
+
+    run(scenario())

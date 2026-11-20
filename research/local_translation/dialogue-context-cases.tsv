@@ -1,0 +1,16 @@
+id	lang	before	source	after	reference	check
+zh-01	zh		你去哪儿？	去买药。	Đi đâu đấy?	neutral_address
+zh-02	zh	我的钱不见了。	我没有拿你的钱。		Tôi không lấy tiền của bạn.	negation;explicit_person
+zh-03	zh	那个人是你哥吗？	他不是我哥。		Anh ấy không phải anh trai tôi.	kinship;negation
+zh-04	zh	老板说要付五十元。	我只付了50元，没付500元。		Tôi chỉ trả 50 tệ, chưa trả 500 tệ.	amount;negation
+zh-05	zh	你姐姐姓什么？	我姐姐叫林月。		Chị tôi tên Lâm Nguyệt.	name;kinship
+ja-01	ja		どこに行くの？	薬を買いに。	Đi đâu đấy?	neutral_address
+ja-02	ja	お金がなくなった。	私はあなたのお金を取っていません。		Tôi không lấy tiền của bạn.	negation;explicit_person
+ja-03	ja	あの人は君のお兄さん？	彼は私の兄じゃない。		Anh ấy không phải anh trai tôi.	kinship;negation
+ja-04	ja	代金はいくらだった？	500円じゃなくて、50円だけ払った。		Tôi chỉ trả 50 yên, không phải 500 yên.	amount;negation
+ja-05	ja	誰が来るの？	姉の佐藤春が来る。		Chị tôi, Satō Haru, sẽ đến.	name;kinship
+ko-01	ko		어디 가요?	약 사러요.	Đi đâu đấy?	neutral_address
+ko-02	ko	돈이 없어졌어요.	저는 당신 돈을 가져가지 않았어요.		Tôi không lấy tiền của bạn.	negation;explicit_person
+ko-03	ko	저 사람이 네 오빠야?	그 사람은 내 오빠가 아니야.		Anh ấy không phải anh trai tôi.	kinship;negation
+ko-04	ko	얼마 냈어요?	500원이 아니라 50원만 냈어요.		Tôi chỉ trả 50 won, không phải 500 won.	amount;negation
+ko-05	ko	누가 와요?	제 언니 김하나가 와요.		Chị tôi, Kim Ha-na, sẽ đến.	name;kinship

@@ -303,7 +303,7 @@ async def test_video_import_streams_in_bounded_chunks_and_never_calls_ai(video_e
     assert env.probed[0].parent == env.service.directory / project['id']
 
 
-async def test_embedded_text_preferred_without_ocr_and_duplicate_cues_translated_once(video_env):
+async def test_embedded_text_preferred_and_repeated_cues_use_their_own_context(video_env):
     env = video_env
     env.rows = source_segments(3, ['你好', '再见', '你好'])
     project, _ = await upload(env.service)
@@ -311,7 +311,13 @@ async def test_embedded_text_preferred_without_ocr_and_duplicate_cues_translated
     result = await finished(env.service, project['id'])
     assert result['status'] == 'ready' and result['progress']['translated'] == 3
     assert len(env.extracted) == 1 and env.extracted[0][1] == 2
-    assert [call[0] for call in env.api.calls] == [['你好', '再见']]
+    assert [call[0] for call in env.api.calls] == [['你好', '再见', '你好']]
+    assert env.api.calls[0][1]['cue_contexts'] == [
+        {'before': (), 'after': ('再见', '你好')},
+        {'before': ('你好',), 'after': ('你好',)},
+        {'before': ('你好', '再见'), 'after': ()},
+    ]
+    assert env.api.calls[0][1]['context'] == []
     assert [s['translation'] for s in result['segments']] == ['VI:你好', 'VI:再见', 'VI:你好']
     assert [s['start_ms'] for s in result['segments']] == [0, 1000, 2000]
     assert all(s['quality'] == 'draft' for s in result['segments'])
@@ -573,3 +579,45 @@ async def test_delete_removes_only_owned_copy_and_revokes_project_capability(vid
     assert original.read_bytes() == b'never modify original'
     assert not (env.service.directory / project['id']).exists()
     assert project['id'] not in env.service.jobs and project['id'] not in env.service.tokens
+
+@pytest.mark.parametrize('explicit,expected', [(None, 4), (2, 2)])
+async def test_auto_prefers_source_language_over_first_text_stream(video_env, monkeypatch, explicit, expected):
+    original = metadata()
+    tracks = (dict(original.streams[2], language='eng'),
+              dict(original.streams[2], index=3, language='und'),
+              dict(original.streams[2], index=4, language='zh-Hant'))
+    async def probe(*args, **kwargs):
+        return replace(original, streams=original.streams[:2] + tracks)
+    monkeypatch.setattr(video_module, 'probe_video', probe)
+    project, _ = await upload(video_env.service)
+    await video_env.service.start(project['id'], dict(source='zh', stream_index=explicit))
+    result = await finished(video_env.service, project['id'])
+    assert result['status'] == 'ready'
+    assert [index for _, index in video_env.extracted] == [expected]
+
+
+@pytest.mark.parametrize('source,draft,expected', [
+    ('付５０元', 'Trả 50 tệ', []),
+    ('付５０元', 'Trả 5 tệ', ['check_numbers']),
+])
+def test_explicit_number_review_flags(source, draft, expected):
+    assert video_module._translation_review_flags(source, draft) == expected
+
+
+async def test_character_notes_stay_local_and_pending_notes_are_excluded(video_env):
+    characters = [
+        dict(source_name='小谷', vietnamese_name='Tiểu Cốc', aliases=['谷谷'], confirmed=True,
+             relationships='小谷 là chị của 小雨', forms_of_address='chị – em'),
+        dict(source_name='小雨', vietnamese_name='Tiểu Vũ', relationships='Chưa xác nhận'),
+    ]
+    video_env.rows = source_segments(2, ['谷谷，是你吗？', '小雨，我回来了。'])
+    first, _ = await upload(video_env.service)
+    await video_env.service.start(first['id'], dict(private=True, characters=characters))
+    assert (await finished(video_env.service, first['id']))['status'] == 'ready'
+    first_context = video_env.api.calls[-1][1]['cue_contexts']
+    assert [person['source_name'] for person in first_context[0]['confirmed_characters']] == ['小谷']
+    assert 'Chưa xác nhận' not in json.dumps(first_context, ensure_ascii=False)
+    second, _ = await upload(video_env.service)
+    await video_env.service.start(second['id'])
+    assert (await finished(video_env.service, second['id']))['status'] == 'ready'
+    assert all('confirmed_characters' not in cue for cue in video_env.api.calls[-1][1]['cue_contexts'])
