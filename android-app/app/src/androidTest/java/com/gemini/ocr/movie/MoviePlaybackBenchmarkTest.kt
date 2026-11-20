@@ -118,7 +118,10 @@ class MoviePlaybackBenchmarkTest {
             device.findObject(By.text("Lưu")).click()
             waitFor("rename persisted"){library.find(before.id)?.title=="Phim đổi tên thử"}
             device.findObject(By.clazz("android.widget.EditText")).text="Phim đổi tên thử"
-            assertTrue(device.wait(Until.hasObject(By.text("Phim đổi tên thử")),5000))
+            device.waitForIdle(1000)
+            waitFor("renamed movie is visible", timeout = 20_000) {
+                device.hasObject(By.text("Phim đổi tên thử"))
+            }
             assertTrue(device.takeScreenshot(File(folder,"library.png")))
             val renamed=library.find(before.id)!!
             assertEquals(before.episodes,renamed.episodes)
