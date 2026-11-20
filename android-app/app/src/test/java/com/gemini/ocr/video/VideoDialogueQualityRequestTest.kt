@@ -141,7 +141,7 @@ class VideoDialogueQualityRequestTest {
         assertNull(VideoFullDialoguePlan.next(updated,3800))
     }
 
-    @Test fun nonFullVideoRequestRetainsTheExactLegacySystemContentsAndGenerationConfiguration(){
+    @Test fun nonFullVideoRequestKeepsGenerationAndSendsTargetsOnceWithGlossary(){
         val batch=VideoTranslationPlan.nextCloudBatch(listOf(VideoCue("legacy",0,800,"我不卖3匹马。")),false)!!
         val profile="document";val glossary="马=ngựa"
         val context=JSONObject(batch.videoContext)
@@ -153,7 +153,14 @@ class VideoDialogueQualityRequestTest {
             "Hợp đồng trả lời video: trả JSON {\"translations\":[{\"id\":\"ID câu nguồn\",\"translation\":\"bản Việt\"}]}. Sao chép đúng ID từ targets. Mỗi ID đúng một lần. Chỉ dịch targets; không đổi ID, timestamp hoặc nguồn. Không suy ID từ thứ tự và không trả mảng chuỗi. Nếu không dịch được một câu, bỏ ID đó; không tự tạo bản dịch để đủ số lượng."))
         expected.getJSONObject("generationConfig").put("responseSchema",idSchema(batch.cueIds))
         val actual=request(batch,profile,glossary)
-        assertEquals(canonical(expected),canonical(actual))
+        assertEquals(canonical(expected.getJSONObject("generationConfig")),canonical(actual.getJSONObject("generationConfig")))
+        val sent = data(actual)
+        assertEquals(canonical(context.getJSONArray("targets")),canonical(sent.getJSONArray("targets")))
+        assertEquals("ngựa",sent.getJSONObject("glossary").getString("马"))
+        val beforeSize = expected.getJSONArray("contents").toString().length
+        val afterSize = actual.getJSONArray("contents").toString().length
+        assertTrue(afterSize < beforeSize)
+        println("Video request content chars: legacy=$beforeSize compact=$afterSize")
         assertFalse(actual.toString().contains("promptRevision"))
         assertFalse(actual.toString().contains(VideoDialoguePrompt.REVISION))
     }
@@ -165,7 +172,7 @@ class VideoDialogueQualityRequestTest {
         val after=live()
         assertEquals(before,after)
         val actual=JSONObject(after)
-        assertEquals("Translate Chinese film subtitles into natural Vietnamese. Preserve meaning, negation, names, all quantities and their roles. Use previous dialogue for context and forms of address. Do not invent speakers or facts. Output only the complete translation.",system(actual))
+        assertEquals("Translate Chinese film subtitles into natural Vietnamese. Preserve meaning, negation, names, all quantities and their roles. Use confirmed dialogue for forms of address. Preserve explicit person and kinship. If the speaker or relationship is unclear, prefer a subjectless Vietnamese sentence or neutral address. Do not invent speakers, family ties, or facts. Output only the complete translation.",system(actual))
         val config=actual.getJSONObject("generationConfig")
         assertEquals("text/plain",config.getString("responseMimeType"));assertFalse(config.has("responseSchema"))
         assertEquals(0.1,config.getDouble("temperature"),0.0)

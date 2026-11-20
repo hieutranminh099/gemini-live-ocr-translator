@@ -95,10 +95,11 @@ class VideoCloudSync internal constructor(
         MovieCloudSync.get(context).rescheduleConstraints()
     }
     /** First interactive use can return a Google account/consent PendingIntent. Never launch from a worker. */
-    suspend fun authorize(selectAccount:Boolean=true):PendingIntent?{
+    suspend fun authorize(selectAccount:Boolean=true,selectedEmail:String?=null):PendingIntent?{
         try{
             status("Đang yêu cầu Google chọn tài khoản và cấp quyền…")
-            val request=request(if(selectAccount)null else state.value.accountEmail)
+            require(selectedEmail == null || selectedEmail.length in 3..320 && selectedEmail.contains('@'))
+            val request=request(selectedEmail ?: if(selectAccount)null else state.value.accountEmail)
             val result=Identity.getAuthorizationClient(context).authorize(request).await()
             if(result.hasResolution())return result.pendingIntent.also{
                 if(it==null)throw AuthorizationFailure("NO_RESOLUTION","Google không trả cửa sổ cấp quyền.")
@@ -180,12 +181,47 @@ class VideoCloudSync internal constructor(
         if(APPDATA_SCOPE !in result.grantedScopes)throw DriveAuthorizationRequired()
         return result.accessToken?.takeIf{it.isNotBlank()}?:throw DriveAuthorizationRequired()
     }
-    private fun repository(email:String)=DriveVideoRepository(context,{accessToken(email)},gate={
+    private suspend fun refreshSyncToken(email: String, rejected: String): String {
+        if (state.value.accountEmail != email) throw DriveAuthorizationRequired()
+        Identity.getAuthorizationClient(context)
+            .clearToken(ClearTokenRequest.builder().setToken(rejected).build()).await()
+        return accessToken(email)
+    }
+
+    private fun repository(email:String)=DriveVideoRepository(context,{accessToken(email)},
+        playbackAccountGuard={ if (state.value.accountEmail != email) throw DriveAuthorizationRequired() },
+        refreshSyncToken={ rejected -> refreshSyncToken(email, rejected) },gate={
         while(SessionState.running.value || VideoJobs.get(context).busy.value!=null || VideoJobs.get(context).batchBusy.value!=null){
             status("Đồng bộ đang nhường tài nguyên cho Live/tác vụ video.",busy=true);delay(500)
         }
         if(state.value.accountEmail!=email)throw DriveAuthorizationRequired()
     })
+    suspend fun saveGeminiKeys(settings: com.gemini.ocr.settings.AppSettings, password: CharArray) =
+        operation.withLock {
+            val email = state.value.accountEmail
+            require(email.isNotBlank() && !state.value.authorizationRequired) { "Kết nối Google Drive trong Kho phim trước." }
+            val guard = playbackAccountGuard(email)
+            val encrypted = withContext(Dispatchers.Default) {
+                com.gemini.ocr.settings.GeminiKeyBackup.seal(settings.savedGeminiKeys(), password, email)
+            }
+            guard()
+            repository(email).saveKeyBackup(encrypted)
+            guard()
+        }
+
+    suspend fun restoreGeminiKeys(settings: com.gemini.ocr.settings.AppSettings, password: CharArray) =
+        operation.withLock {
+            val email = state.value.accountEmail
+            require(email.isNotBlank() && !state.value.authorizationRequired) { "Kết nối Google Drive trong Kho phim trước." }
+            val guard = playbackAccountGuard(email)
+            val encrypted = repository(email).loadKeyBackup()
+            val keys = withContext(Dispatchers.Default) {
+                com.gemini.ocr.settings.GeminiKeyBackup.open(encrypted, password, email)
+            }
+            guard()
+            settings.restoreGeminiKeys(keys)
+        }
+
     internal fun repositoryForMovies(email:String)=repository(email)
 
     internal fun requirePlaybackAccount(email:String,generation:Long?=null) {
@@ -296,6 +332,8 @@ class VideoCloudSync internal constructor(
                 "OAuth chưa được cấu hình cho ${context.packageName}. Kiểm tra Android OAuth client đúng package/SHA-1 APK, consent/test users và Drive API trong cùng Google Cloud project."
             e is ApiException && e.statusCode in listOf(16,12501)->
                 "Cửa sổ Google đã bị hủy hoặc chưa được cấp quyền. Chọn lại tài khoản và chấp thuận quyền Drive."
+            e is ApiException && e.statusCode==8->
+                "Google Play services trả lỗi nội bộ khi chọn/cấp quyền tài khoản. Thử chọn tài khoản qua hệ thống; nếu vẫn lỗi, cập nhật Google Play services và kiểm tra cấu hình OAuth của APK."
             e is ApiException && e.statusCode==7->"Lỗi mạng khi cấp quyền; kiểm tra kết nối rồi thử lại."
             else->"Chưa kết nối được. Kiểm tra Google Play services, mạng và quyền tài khoản; dữ liệu vẫn lưu trên máy."
         }

@@ -86,12 +86,23 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
             working = true; notice = ""; noticeError = false
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { noticeError = true; notice = e.message ?: "Chưa hoàn tất thao tác. Bạn có thể thử lại." }
+            catch (e: Exception) { noticeError = true; notice = if (auth.state.value.authorizationRequired) "" else e.message ?: "Chưa hoàn tất thao tác. Bạn có thể thử lại." }
             finally { working = false }
         }
     }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         action { auth.completeAuthorization(result.data, result.resultCode); cloud.refreshCloud() }
+    }
+    val systemAccount = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val email = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
+            val type = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_TYPE)
+            if (!email.isNullOrBlank() && type == "com.google") action {
+                val pending = auth.authorize(selectedEmail = email)
+                if (pending != null) consent.launch(IntentSenderRequest.Builder(pending.intentSender).build())
+                else cloud.refreshCloud()
+            }
+        }
     }
     val connect: () -> Unit = { action {
         val pending = auth.authorize(selectAccount = true)
@@ -157,6 +168,12 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
                             Icon(Icons.Outlined.Sync, null); Spacer(Modifier.width(6.dp)); Text("Đồng bộ danh mục")
                         }
                     }
+                    if (account.authorizationRequired && account.message.contains("/8]")) {
+                        OutlinedButton(onClick = {
+                            systemAccount.launch(android.accounts.AccountManager.newChooseAccountIntent(
+                                null, null, arrayOf("com.google"), null, null, null, null))
+                        }, enabled = !working && !account.busy) { Text("Chọn tài khoản qua hệ thống") }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(account.wifiOnly, { auth.setWifiOnly(it) }, enabled = !working)
                         Text("Chỉ tải lên qua Wi-Fi / mạng không tính phí", style = MaterialTheme.typography.bodyMedium)
@@ -164,9 +181,8 @@ fun MovieLibraryScreen(modifier: Modifier = Modifier) {
                     if (account.accountEmail.isNotBlank()) TextButton(onClick = { auth.disconnect() }, enabled = !working) { Text("Ngắt kết nối trên thiết bị này") }
                 }
                 }
-                if (account.authorizationRequired) StatusNotice(account.message, error = true, onRetry = if (!working && !account.busy) connect else null)
                 if (working || account.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                if (notice.isNotBlank()) StatusNotice(notice, error = noticeError)
+                if (notice.isNotBlank() && notice != account.message) StatusNotice(notice, error = noticeError)
             }
             if (processing.isNotEmpty()) item { Text("Đang chuẩn bị / xử lý · ${processing.size}", style = MaterialTheme.typography.titleMedium) }
             items((if (showAllProcessing) processing else processing.take(3)).chunked(columns), key = { "processing-${it.first().id}" }) { row ->

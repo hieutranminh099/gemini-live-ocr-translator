@@ -43,7 +43,7 @@ data class CloudVideoSnapshot(
     val revisionId:String, val sourceBytes:Long=0
 )
 
-/** Immutable revisions in the current app's private Drive space. No shared/public URLs or secrets. */
+/** Immutable revisions in private Drive space. Key backups contain password-encrypted ciphertext. */
 internal class DriveVideoRepository(
     private val context:Context,
     private val token:suspend()->String,
@@ -54,10 +54,26 @@ internal class DriveVideoRepository(
     private val gate:suspend()->Unit={},
     private val progressWriterId:String=installationWriterId(context),
     private val refreshPlaybackToken:(suspend (String)->String)?=null,
-    private val playbackAccountGuard:()->Unit={}
+    private val playbackAccountGuard:()->Unit={},
+    private val refreshSyncToken:(suspend (String)->String)?=null
 ) {
     private val store=VideoStore(context)
     private data class LocalMedia(val role:String,val size:Long,val sha:String,val mime:String,val open:()->InputStream)
+
+    suspend fun saveKeyBackup(encrypted: ByteArray) = withContext(Dispatchers.IO) {
+        require(encrypted.size in 1..32768)
+        val revision = UUID.randomUUID().toString()
+        val local = LocalMedia("gemini-keys", encrypted.size.toLong(), hash(encrypted), "application/json") { encrypted.inputStream() }
+        upload(local, "gemini-keys", revision, finalKind = "key-backup")
+        Unit
+    }
+
+    suspend fun loadKeyBackup(): ByteArray = withContext(Dispatchers.IO) {
+        val files = listFiles("appProperties has { key='kind' and value='key-backup' }")
+        val latest = files.maxByOrNull { it.optString("createdTime") }
+            ?: throw IOException("Chưa có bản sao khóa Gemini trên tài khoản này.")
+        downloadBytes(latest.getString("id"), 32768)
+    }
 
     suspend fun publish(project:VideoProject,onProgress:(String)->Unit={}):CloudVideoSnapshot=withContext(Dispatchers.IO){
         require(project.cues.isNotEmpty() && project.cues.all{it.translation.isNotBlank()}){"Dịch xong các câu trước khi sao lưu."}
@@ -367,7 +383,7 @@ internal class DriveVideoRepository(
         do{
             val url=api.newBuilder().addPathSegment("files").addQueryParameter("spaces","appDataFolder")
                 .addQueryParameter("q","trashed = false and ($query)").addQueryParameter("pageSize","1000")
-                .addQueryParameter("fields","nextPageToken,files(id,name,size,appProperties)")
+                .addQueryParameter("fields","nextPageToken,files(id,name,size,createdTime,appProperties)")
             page?.let{url.addQueryParameter("pageToken",it)}
             val json=jsonRequest(Request.Builder().url(url.build()).get())
             val files=json.optJSONArray("files")?:JSONArray()
@@ -481,7 +497,7 @@ internal class DriveVideoRepository(
                 val cancellation=launch(start=CoroutineStart.UNDISPATCHED){try{awaitCancellation()}finally{call.cancel()}}
                 try{call.execute().use{response->
                     playbackAccountGuard()
-                    if(response.code==401 && !refreshed && refreshPlaybackToken!=null){retry=true;null}
+                    if(response.code==401 && !refreshed && (refreshPlaybackToken!=null || refreshSyncToken!=null)){retry=true;null}
                     else {
                         if(refreshPlaybackToken!=null && !response.isSuccessful)throw DrivePlaybackException(when(response.code){
                             401->DrivePlaybackFailure.AUTH;403->DrivePlaybackFailure.FORBIDDEN;404->DrivePlaybackFailure.MISSING
@@ -496,7 +512,7 @@ internal class DriveVideoRepository(
                 return@withContext result as T
             }
             refreshed=true
-            access=requireNotNull(refreshPlaybackToken).invoke(access)
+            access=requireNotNull(refreshPlaybackToken ?: refreshSyncToken).invoke(access)
             require(access.isNotBlank())
         }
         @Suppress("UNREACHABLE_CODE") error("Unreachable")

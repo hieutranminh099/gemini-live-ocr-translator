@@ -121,3 +121,11 @@ python -m pytest tests/test_video_jobs.py -q
 ```
 
 Clip hai giây có logo cố định, watermark di chuyển và một phụ đề thật. Trên máy Cloud, lượt đo cùng clip cho 4 cue dính nhiễu khi tắt và 0 khi bật, với một cue phụ đề đúng sau lọc. Thời gian hai lượt lần lượt là 4,31 và 4,29 giây. Đây là phép đo trên clip tổng hợp, mỗi cấu hình chạy một lượt. Ca giả lập bổ sung kiểm tra giữ thay đổi chữ số chỉ tồn tại một mẫu. Các bài test quản lý ngữ cảnh và kho dùng provider giả lập. Dùng dữ liệu tham chiếu trong [research/local_translation](research/local_translation/README.md) khi đánh giá bản dịch từ model thật.
+
+### Drive và bản sao khóa Gemini ngày 20/11/2026
+
+Chạy các lớp `GeminiKeyBackupTest`, `VideoCloudAuthorizationTest`, `DriveVideoRepositoryTest`, `MovieCloudPlaybackUiTest`, `VideoTranslationRequestTest` và `VideoDialogueQualityRequestTest` qua task `:app:testDebugUnitTest`. Lượt Cloud đạt 36 test, build `:app:assembleDebug` và `:app:lintDebug` đều thành công. Robolectric trên Cloud dùng thư mục user.home có quyền ghi và cấu hình proxy của môi trường cho JVM test.
+
+Fixture request video có nguồn “我不卖3匹马。” và glossary “马=ngựa” giảm nội dung JSON của contents từ 445 xuống 309 ký tự. Đây là kích thước chuỗi của fixture, không phải số token hoặc thời gian trả lời Gemini.
+
+Các bài Drive dùng MockWebServer và kết quả callback tổng hợp. Đã kiểm tra refresh 401 giới hạn một lần, bản sao khóa mã hóa qua giao thức upload/download, sai mật khẩu/tài khoản, ciphertext bị sửa, và lỗi callback/8. Chưa xác minh đăng nhập Google thật trên BlueStacks, khôi phục trên thiết bị thứ hai hay chất lượng/độ trễ Gemini thật.

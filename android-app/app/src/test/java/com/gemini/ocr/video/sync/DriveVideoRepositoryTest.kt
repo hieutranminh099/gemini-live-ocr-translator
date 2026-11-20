@@ -47,6 +47,35 @@ class DriveVideoRepositoryTest{
         repository=DriveVideoRepository(context,{"test-only-token"},api=server.url("/drive/v3/"),uploadApi=server.url("/upload/drive/v3/"))
     }
     @After fun stop(){server.shutdown()}
+    @Test fun expiredSyncTokenRefreshesOnceAndPreservesSyncErrorTypes()=runBlocking {
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody("""{"files":[]}"""))
+        var refreshes = 0
+        val repository = DriveVideoRepository(context, {"expired"}, api=server.url("/drive/v3/"),
+            refreshSyncToken = { rejected -> assertEquals("expired", rejected); refreshes++; "fresh" })
+        assertTrue(repository.list().isEmpty())
+        assertEquals(1, refreshes)
+        assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401))
+        try { repository.list(); fail("Must stop after one refresh") }
+        catch (_: DriveAuthorizationRequired) { }
+        assertEquals(2, refreshes)
+    }
+
+    @Test fun encryptedKeyBackupRoundTripsThroughPrivateDriveWithoutEnteringVideoLibrary()=runBlocking {
+        val password = "fixture-backup-password".toCharArray()
+        val keys = listOf("fixture-primary-key", "", "fixture-third-key")
+        val encrypted = com.gemini.ocr.settings.GeminiKeyBackup.seal(keys, password, "test@example.com")
+        repository.saveKeyBackup(encrypted)
+        assertTrue(repository.list().isEmpty())
+        assertArrayEquals(encrypted, repository.loadKeyBackup())
+        assertEquals(keys, com.gemini.ocr.settings.GeminiKeyBackup.open(repository.loadKeyBackup(), password, "test@example.com"))
+        assertTrue(drive.content.values.none { it.toString(Charsets.UTF_8).contains("fixture-primary-key") })
+    }
+
     private fun project():VideoProject{
         val source=File(context.cacheDir,"public-fixture-${UUID.randomUUID()}.mp4")
         fixtureFile=source

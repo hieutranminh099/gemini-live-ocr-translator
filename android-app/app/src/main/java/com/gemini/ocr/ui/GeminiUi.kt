@@ -116,6 +116,14 @@ internal fun friendlyError(detail: String): FriendlyError {
             FriendlyError("Chưa lấy được khung hình", "Kiểm tra tệp video và vùng phụ đề. Phần đã xử lý vẫn được giữ.")
         code.startsWith("ROI_") ->
             FriendlyError("Vùng phụ đề cần kiểm tra", "Mở Thiết lập phụ đề để kiểm tra vùng chữ. Tiến độ hiện tại vẫn được giữ.")
+        detail.startsWith("Google Drive [") && detail.contains("/8]") ->
+            FriendlyError("Google Play services gặp lỗi đăng nhập", "Thử Chọn tài khoản qua hệ thống. Nếu vẫn lỗi, cần kiểm tra Google Play services và cấu hình OAuth của bản cài.")
+        detail.startsWith("Google Drive [") && detail.contains("/10]") ->
+            FriendlyError("Bản cài chưa được cấp quyền Google", "Cần đăng ký đúng package và SHA-1 chữ ký APK trong Android OAuth client. Chọn lại tài khoản sẽ không sửa được cấu hình này.")
+        detail.startsWith("Google Drive [") && detail.contains("DRIVE_SCOPE_MISSING") ->
+            FriendlyError("Chưa cấp quyền Google Drive", "Chọn lại tài khoản và chấp thuận quyền dữ liệu riêng của ứng dụng.")
+        detail.startsWith("Google Drive [") && detail.contains("/7]") ->
+            FriendlyError("Không liên lạc được với Google", "Kiểm tra mạng và Google Play services trên thiết bị rồi thử lại.")
         detail.contains("429") || detail.contains("hạn mức", true) -> FriendlyError("Đang chờ hạn mức dịch", "Tiến độ đã lưu. Chờ hết thời gian giới hạn rồi thử lại.")
         detail.contains("OAuth", true) || detail.contains("Google", true) && (detail.contains("quyền", true) || detail.contains("authorization", true)) ->
             FriendlyError("Chưa thể kết nối Google Drive", "Chọn lại tài khoản hoặc xem chi tiết để kiểm tra quyền kết nối.")

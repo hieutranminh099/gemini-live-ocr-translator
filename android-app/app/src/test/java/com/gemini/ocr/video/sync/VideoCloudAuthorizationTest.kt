@@ -55,6 +55,18 @@ class VideoCloudAuthorizationTest {
         assertEquals(error.message,sync.state.value.message)
         assertTrue(sync.state.value.accountEmail.isBlank())
     }
+    @Test fun internalGoogleCallbackFailureOffersSystemAccountRecoveryWithoutLosingStoredAccount()=runBlocking {
+        context.getSharedPreferences("video-google-sync",Context.MODE_PRIVATE).edit()
+            .putString("account","previous@example.com").commit()
+        val sync=sync{throw ApiException(Status(8,"private-provider-diagnostic"))}
+        val error=failure{sync.completeAuthorization(Intent())}
+        assertTrue(error.message.orEmpty().contains("callback/8"))
+        assertTrue(error.message.orEmpty().contains("qua hệ thống"))
+        assertFalse(error.message.orEmpty().contains("private-provider-diagnostic"))
+        assertEquals("previous@example.com",sync.state.value.accountEmail)
+        assertEquals(0,server.requestCount)
+    }
+
     @Test fun emptyCancelledResultReportsCallbackCodeRatherThanLeavingStaleStatus()=runBlocking {
         val sync=sync()
         val error=failure{sync.completeAuthorization(null,Activity.RESULT_CANCELED)}

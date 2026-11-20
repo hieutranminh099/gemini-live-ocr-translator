@@ -43,6 +43,19 @@ class VideoTranslationRequestTest{
         assertEquals(4096,request.getJSONObject("generationConfig").getInt("maxOutputTokens"))
         assertEquals("application/json",request.getJSONObject("generationConfig").getString("responseMimeType"))
     }
+    @Test fun mappedVideoRequestSendsSourceOnceAndRejectsContradictoryTargets() {
+        val cue = VideoCue("one", 0, 1000, "不卖250匹马")
+        val batch = VideoTranslationPlan.nextCloudBatch(listOf(cue), false)!!
+        val request = JSONObject(VideoTranslationClient.buildRequest(batch, "manga", ""))
+        val user = request.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text")
+        assertEquals(1, Regex(Regex.escape(cue.source)).findAll(user).count())
+        assertEquals("one", JSONObject(user).getJSONArray("targets").getJSONObject(0).getString("id"))
+        try {
+            VideoTranslationClient.buildRequest(batch.copy(texts = listOf("卖250匹马")), "manga", "")
+            fail("Must reject conflicting source text")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test fun liveDefaultDoesNotReceiveVideoInstructionOrLargeOutputBudget(){
         val request=JSONObject(StandaloneTranslator.buildGeminiRequestJson(listOf("你好"),contextItems=listOf("前句" to "Câu trước")))
         val system=request.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")

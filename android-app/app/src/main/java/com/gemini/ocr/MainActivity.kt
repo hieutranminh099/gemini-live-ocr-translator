@@ -375,7 +375,11 @@ class MainActivity : ComponentActivity() {
             Text(if (settings.effectiveStandaloneApiKey().isNotBlank()) "Đã cấu hình khóa Gemini API."
                 else if (videoKeyReady) "Đã cấu hình khóa cho video. Dịch trực tiếp cần khóa chính."
                 else "Chưa có khóa. Bạn vẫn có thể tra các câu đã lưu trong Kho thoại.", color = Muted)
-            GeminiApiKeySettingsPanel(settings, enabled = !running, onChanged = { keyRevision++ })
+            key(keyRevision) { GeminiApiKeySettingsPanel(settings, enabled = !running, onChanged = { keyRevision++ }) }
+            com.gemini.ocr.settings.GeminiKeySyncPanel(settings, enabled = !running, onChanged = {
+                apiKeyInput = settings.standaloneApiKey
+                keyRevision++
+            })
         }
         }
         Section("Kiểu phụ đề") { SubtitleAppearanceEditor(running) }

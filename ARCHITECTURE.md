@@ -94,3 +94,13 @@ Tuỳ chọn `characters` trong project lưu tên gốc, tên Việt, bí danh, 
 Android có tùy chọn **Lọc chữ nhiễu trong dải phụ đề**, mặc định tắt. Trong quét tự động, kết quả khung trước chỉ giúp xác định vị trí dòng. Một khung mới chỉ được bỏ các khối chữ nhỏ cách xa dòng nếu phần chữ còn lại khớp nguyên văn với phụ đề khung trước. Khung trống, câu mới và thao tác dịch một khung tiếp tục dùng kết quả OCR hiện tại. Kiểm tra hình ảnh mới sau phản hồi dịch vẫn được áp dụng.
 
 Mục kho phát sinh từ cue có ngữ cảnh dùng phạm vi gồm ID dự án và hash của cửa sổ thoại cùng ghi chú áp dụng. Điều này giữ riêng hai bản dịch của cùng nguyên văn khi chúng có bối cảnh khác. Các mục kho đã duyệt trước đó giữ nguyên. Câu được duyệt thủ công trong project công khai và không có ngữ cảnh vẫn theo tùy chọn chia sẻ kho cũ.
+
+### Kết nối Drive và bản sao khóa Gemini
+
+Các thao tác danh mục và đồng bộ thử làm mới access token một lần khi Google trả HTTP 401. Token bị từ chối được xóa qua Google Play services trước khi xin token mới. Phản hồi 401 tiếp theo yêu cầu kết nối lại. Giao diện Kho phim hiển thị lỗi xác thực tại một vị trí và phân biệt lỗi OAuth 10 với quyền chưa cấp hoặc mạng gián đoạn. Android OAuth client phải khớp package và SHA-1 chữ ký của APK thực tế.
+
+Trong Tùy chỉnh, **Đồng bộ khóa Gemini** lưu hoặc khôi phục ba ô khóa theo tài khoản Drive đã kết nối. Người dùng nhập mật khẩu sao lưu từ 12 ký tự. PBKDF2-HMAC-SHA256 với 210.000 vòng và salt ngẫu nhiên tạo khóa AES-256-GCM. Tài khoản là dữ liệu xác thực của ciphertext. Drive chỉ nhận bản sao mã hóa trong appDataFolder. Khôi phục xác thực toàn bộ bản sao, kiểm tra tài khoản còn hiện hành, mã hóa các ô bằng Android Keystore rồi ghi bằng một transaction SharedPreferences. Thao tác này yêu cầu xác nhận thay ba ô khóa. Người dùng giữ mật khẩu để khôi phục trên thiết bị khác.
+
+Request video có ID chỉ gửi nguyên văn trong targets một lần. Bộ dựng request kiểm tra nguồn trong targets khớp cue trước khi gửi. Dữ liệu ngữ cảnh và glossary vẫn đi cùng request. Việc này giảm dữ liệu lặp trong request. Ảnh hưởng đến chất lượng và độ trễ Gemini cần đo với API thật.
+
+Khi Google Play services trả `callback/8`, Kho phim cung cấp **Chọn tài khoản qua hệ thống**. AccountManager chỉ chọn tài khoản. Ứng dụng tiếp tục yêu cầu quyền qua AuthorizationClient với tài khoản đó và chỉ ghi nhận kết nối sau khi xác minh quyền Drive và phản hồi userinfo. Lỗi nội bộ Google vẫn cần được kiểm tra trên thiết bị thực.

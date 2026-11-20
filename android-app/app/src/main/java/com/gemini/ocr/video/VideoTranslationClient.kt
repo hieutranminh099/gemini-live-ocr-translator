@@ -72,10 +72,22 @@ internal class VideoTranslationClient(private val context: Context? = null) {
             val context = JSONObject(batch.videoContext)
             val targets = context.getJSONArray("targets")
             require(targets.length() == batch.cueIds.size)
-            for (index in batch.cueIds.indices) targets.getJSONObject(index).put("id", batch.cueIds[index])
+            for (index in batch.cueIds.indices) {
+                val target = targets.getJSONObject(index)
+                require(target.getString("source") == batch.texts[index]) { "Video target source does not match its cue" }
+                target.put("id", batch.cueIds[index])
+            }
+            val glossaryTerms = PhoneTranslationCache.parseGlossary(glossary).filterKeys { term ->
+                batch.texts.any { it.contains(term, ignoreCase = true) }
+            }.entries.take(8).associate { it.toPair() }
+            if (glossaryTerms.isNotEmpty()) context.put("glossary", JSONObject(glossaryTerms))
             val request = JSONObject(StandaloneTranslator.buildGeminiRequestJson(batch.texts, profile = profile,
                 glossary = PhoneTranslationCache.parseGlossary(glossary), contextItems = emptyList(),
                 structuredOutput = true, videoTranslationContext = context.toString(), videoMaxOutputTokens = batch.maxOutputTokens))
+            // Each target already contains its source and ID. Avoid sending a second
+            // numbered copy that can compete with the explicit response mapping.
+            request.put("contents", JSONArray().put(JSONObject().put("role", "user")
+                .put("parts", JSONArray().put(JSONObject().put("text", context.toString())))))
             val parts = request.getJSONObject("systemInstruction").getJSONArray("parts")
             parts.put(JSONObject().put("text", "Hợp đồng trả lời video: trả JSON {\"translations\":[{\"id\":\"ID câu nguồn\",\"translation\":\"bản Việt\"}]}. Sao chép đúng ID từ targets. Mỗi ID đúng một lần. Chỉ dịch targets; không đổi ID, timestamp hoặc nguồn. Không suy ID từ thứ tự và không trả mảng chuỗi. Nếu không dịch được một câu, bỏ ID đó; không tự tạo bản dịch để đủ số lượng."))
             val item = JSONObject().put("type", "OBJECT").put("properties", JSONObject()

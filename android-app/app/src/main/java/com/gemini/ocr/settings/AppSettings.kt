@@ -225,6 +225,28 @@ class AppSettings(context: Context) {
         encryptPref("gemini_video_api_key_$slot", value.trim(), allowPlainFallback = false)
     }
 
+    internal fun savedGeminiKeys(): List<String> =
+        listOf(standaloneApiKey, secondaryGeminiApiKey(2), secondaryGeminiApiKey(3))
+
+    internal fun restoreGeminiKeys(values: List<String>) {
+        require(values.size == 3 && values.all { it.length <= 1024 })
+        val names = listOf("standalone_api_key", "gemini_video_api_key_2", "gemini_video_api_key_3")
+        // Encrypt every slot first so a keystore failure leaves existing settings intact.
+        val encrypted = values.map { value ->
+            if (value.isBlank()) null else {
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, key())
+                Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+            }
+        }
+        val editor = prefs.edit()
+        names.zip(encrypted).forEach { (name, value) ->
+            if (value == null) editor.remove(name) else editor.putString(name, value)
+            editor.remove("${name}_plain_fallback")
+        }
+        check(editor.commit()) { "Chưa lưu được khóa vào thiết bị." }
+    }
+
     fun geminiVideoKeys(): List<GeminiKeySlot> = listOf(
         GeminiKeySlot(1, effectiveStandaloneApiKey().trim()),
         GeminiKeySlot(2, secondaryGeminiApiKey(2).trim()),
